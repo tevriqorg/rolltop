@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"rolltop/backend/blob"
+	"rolltop/backend/evidence"
 	"rolltop/backend/provider"
 	"rolltop/backend/search"
 	"rolltop/backend/store"
@@ -133,9 +134,21 @@ func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
 		if m.Starred {
 			flags = append(flags, `\Flagged`)
 		}
+		evidenceStore := evidence.Service{Store: s.Store, Root: s.Blobs.Root}
+		observation, err := evidenceStore.Capture(ctx, evidence.Input{
+			UserID: a.UserID, Provider: a.Provider, SourceAccount: a.ID, ProviderMessageID: m.ID,
+			ThreadID: m.ThreadID, Folders: m.Folders, Labels: m.Labels, MessageIDHeader: m.MessageID,
+			SourceSize: m.Size, Raw: m.Raw, Oversized: m.Oversized,
+		})
+		if err != nil {
+			return err
+		}
 		ingest := syncer.Service{Store: s.Store, Blobs: s.Blobs, Search: s.Search}
 		msg, err := ingest.StoreSnapshotMessage(ctx, a.UserID, store.MailAccount{ID: source.AccountID, UserID: a.UserID}, store.Mailbox{ID: source.MailboxID, UserID: a.UserID, AccountID: source.AccountID, Name: "Mock mirror", IncludeInSearch: true}, syncer.FetchedMessage{Mailbox: "Mock mirror", UID: slot, Raw: m.Raw, Size: m.Size, Flags: flags, Oversized: m.Oversized})
 		if err != nil {
+			return err
+		}
+		if err = s.Store.LinkEvidenceObservation(ctx, a.UserID, observation.ObservationKey, msg.ID); err != nil {
 			return err
 		}
 		folders, _ := json.Marshal(m.Folders)
