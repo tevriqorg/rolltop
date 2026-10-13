@@ -1041,6 +1041,7 @@ function Sidebar({
         Compose
       </a>
       <div className="sidebar-scroll">
+        <a href="/mock" className="folder" onClick={(event) => open(event, "/mock")}><span className="folder-name">Mock Mail Hub</span></a>
         <a
           href="/mail"
           className={`folder ${allMailActive ? "active" : ""}`}

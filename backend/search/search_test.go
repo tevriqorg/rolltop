@@ -1328,6 +1328,14 @@ func TestSearchOptionsCanExcludeAttachmentText(t *testing.T) {
 	if len(ids) != 1 || ids[0] != 1 {
 		t.Fatalf("default attachment ids = %v", ids)
 	}
+	ids, err = svc.Search(ctx, 1, "report.pdf", 10, 0)
+	if err != nil || len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("dotted attachment filename ids = %v: %v", ids, err)
+	}
+	ids, err = svc.Search(ctx, 2, "report.pdf", 10, 0)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("attachment filename crossed tenants: %v: %v", ids, err)
+	}
 	ids, err = svc.SearchWithOptions(ctx, 1, "peculiarterm", 10, 0, SearchOptions{Behavior: SearchBehavior{AttachmentWeight: "off"}})
 	if err != nil {
 		t.Fatal(err)

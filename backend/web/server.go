@@ -73,6 +73,7 @@ type Options struct {
 
 // Server owns HTTP handlers, shared services, session settings, event fanout, and lightweight caches.
 type Server struct {
+	mockHubMu                 sync.Mutex
 	store                     *store.Store
 	blobs                     *blob.Store
 	search                    *search.Service

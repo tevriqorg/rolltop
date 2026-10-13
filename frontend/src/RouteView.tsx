@@ -4,6 +4,7 @@
 import type { AddToast, LocationState, SecurityUnlockState } from "./appTypes";
 import type { Bootstrap, Mailbox, OutboxSummary, SwipePreferences, SyncRun, ThemeDefinition, User } from "./types";
 import { MailView, SearchView, SnoozedView } from "./features/mail/MailViews";
+import { MockHub } from "./features/mail/MockHub";
 import { ThreadView } from "./features/mail/ThreadView";
 import { ComposePage } from "./features/compose/ComposeViews";
 import { ContactsView } from "./features/contacts/ContactsView";
@@ -62,6 +63,7 @@ export function RouteView({
   openSecurityUnlock: (identityID?: number, onUnlocked?: (state: SecurityUnlockState) => void, recipientKeyIDs?: string[], fallbackEmail?: string) => void;
   addToast: AddToast;
 }) {
+  if (location.path === "/mock") return <MockHub csrf={csrf} datePrefs={user} swipePreferences={swipePreferences} navigate={navigate} addToast={addToast} />;
   const securityEnabled = Boolean(securityUnlockPlugin(runtimePlugins.all));
   if (location.path === "/snoozes") {
     return <SnoozedView csrf={csrf} datePrefs={user} location={location} navigate={navigate} hiddenMessageIDs={hiddenMessageIDs} mailboxes={mailboxes} swipePreferences={swipePreferences} mailGeneration={mailGeneration} messageSecurityPlugins={runtimePlugins.all} addToast={addToast} />;

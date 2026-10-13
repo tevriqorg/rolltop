@@ -1,5 +1,5 @@
-// Package provider defines the Gate B read-only routing seam. It deliberately
-// does not connect providers to SQLite, search, HTTP routes, or credentials.
+// Package provider defines provider routing, opaque state, and deterministic
+// mock sources. Persistence and HTTP integration live outside this package.
 package provider
 
 import (
@@ -17,9 +17,9 @@ const (
 
 // Account identifies a source within a tenant; IDs are local, not email addresses.
 type Account struct {
-	UserID   int64
-	ID       string
-	Provider Kind
+	UserID   int64  `json:"user_id"`
+	ID       string `json:"id"`
+	Provider Kind   `json:"provider"`
 }
 
 // State is scoped to a provider, tenant, account and collection. Only the

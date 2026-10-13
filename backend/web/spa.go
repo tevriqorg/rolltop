@@ -218,7 +218,7 @@ func isPublicAuthRoute(p string) bool {
 
 func isAppRoute(p string) bool {
 	switch {
-	case p == "/setup", p == "/login", p == "/mail", p == "/snoozes", p == "/search", p == "/compose", p == "/contacts", p == "/settings/account", p == "/admin/users":
+	case p == "/mock", p == "/setup", p == "/login", p == "/mail", p == "/snoozes", p == "/search", p == "/compose", p == "/contacts", p == "/settings/account", p == "/admin/users":
 		return true
 	case strings.HasPrefix(p, "/mail/"), strings.HasPrefix(p, "/mailbox/"), strings.HasPrefix(p, "/search/"):
 		return true

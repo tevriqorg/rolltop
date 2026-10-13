@@ -40,13 +40,14 @@ func (s *Server) apiBulkReadMessages(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	if err := s.store.MarkMessagesReadForUser(r.Context(), cu.User.ID, owned, in.Read, true); err != nil {
+	realIDs, err := s.markMailRead(r.Context(), cu.User.ID, owned, in.Read)
+	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
 	s.notifyUserChanged(cu.User.ID)
-	if s.syncer != nil && len(owned) > 0 {
-		ids := append([]int64(nil), owned...)
+	if s.syncer != nil && len(realIDs) > 0 {
+		ids := append([]int64(nil), realIDs...)
 		s.queueReadStatePush(cu.User.ID, ids)
 	}
 	writeJSON(w, map[string]any{"ok": true, "updated": len(owned)})

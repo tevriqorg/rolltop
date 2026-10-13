@@ -1905,9 +1905,17 @@ func textQuery(text string, quoted bool, behavior normalizedSearchBehavior) blev
 	}
 	if q := domainTextQuery(text); q != nil {
 		disjuncts = append(disjuncts, q)
+		// Dotted text can also be an attachment filename. Preserve the
+		// analyzer's literal tokens alongside the domain ranking clauses.
+		disjuncts = append(disjuncts, defaultOrWeightedTextQuery(text, behavior))
 	} else if len(terms) > 1 {
 		disjuncts = append(disjuncts, allTextTermsQuery(terms, behavior))
 		disjuncts = append(disjuncts, textPhraseQuery(text, 1.5, behavior))
+	} else if containsNonASCII(text) {
+		// MatchQuery treats analyzer-produced CJK tokens as alternatives. For a
+		// contiguous CJK search term, phrase semantics preserve user intent and
+		// avoid unrelated messages matching only one token.
+		disjuncts = append(disjuncts, textPhraseQuery(text, 1, behavior))
 	} else {
 		disjuncts = append(disjuncts, defaultOrWeightedTextQuery(text, behavior))
 		if normalized != "" && normalized != text {
@@ -1923,7 +1931,7 @@ func textQuery(text string, quoted bool, behavior normalizedSearchBehavior) blev
 			disjuncts = append(disjuncts, exactCompactQueries(joined, behavior)...)
 			disjuncts = append(disjuncts, splitPhraseQueries(joined, behavior)...)
 			disjuncts = append(disjuncts, splitWordQueries(joined, behavior)...)
-			if behavior.fuzzyEnabled() && behavior.attachmentBoostScale() > 0 && len(joined) >= 5 {
+			if behavior.fuzzyEnabled() && behavior.attachmentBoostScale() > 0 && fuzzySearchTerm(joined) {
 				fq := bleve.NewFuzzyQuery(joined)
 				fq.SetField("compound")
 				fq.SetFuzziness(fuzzinessFor(joined, behavior))
@@ -1934,7 +1942,7 @@ func textQuery(text string, quoted bool, behavior normalizedSearchBehavior) blev
 	}
 	if behavior.fuzzyEnabled() && len(terms) <= 1 {
 		for _, term := range terms {
-			if len(term) >= 5 {
+			if fuzzySearchTerm(term) {
 				disjuncts = append(disjuncts, fuzzyTextQuery(term, 0.5, behavior))
 			}
 		}
@@ -2001,7 +2009,7 @@ func allTextTermsQuery(terms []string, behavior normalizedSearchBehavior) bleveq
 
 func textTermQuery(term string, behavior normalizedSearchBehavior) blevequery.Query {
 	queries := []blevequery.Query{baseTextTermQuery(term, behavior)}
-	if behavior.fuzzyEnabled() && len(term) >= 5 {
+	if behavior.fuzzyEnabled() && fuzzySearchTerm(term) {
 		queries = append(queries, fuzzyTextQuery(term, 0.5, behavior))
 	}
 	if len(queries) == 1 {
@@ -2512,14 +2520,35 @@ func splitWordQueries(term string, behavior normalizedSearchBehavior) []bleveque
 
 func splitTermQuery(term string, behavior normalizedSearchBehavior) blevequery.Query {
 	queries := []blevequery.Query{baseTextTermQuery(term, behavior)}
-	if behavior.fuzzyEnabled() && len(term) >= 4 {
+	if behavior.fuzzyEnabled() && fuzzySearchTerm(term) {
 		queries = append(queries, fuzzyTextQuery(term, 0.5, behavior))
 	}
 	return bleve.NewDisjunctionQuery(queries...)
 }
 
 func canSplitCompactTerm(term string) bool {
-	return len(term) >= minSplitFragmentLength*2
+	return fuzzySearchTerm(term) && len(term) >= minSplitFragmentLength*2
+}
+
+func containsNonASCII(term string) bool {
+	for _, r := range term {
+		if r > unicode.MaxASCII {
+			return true
+		}
+	}
+	return false
+}
+
+func fuzzySearchTerm(term string) bool {
+	if len(term) < 5 {
+		return false
+	}
+	for _, r := range term {
+		if r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
 }
 
 func boostedMatch(field, text string, boost float64) blevequery.Query {

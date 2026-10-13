@@ -12,6 +12,8 @@ import (
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/"), "/")
 	switch {
+	case path == "mock-hub" || strings.HasPrefix(path, "mock-hub/"):
+		s.apiMockHub(w, r, path)
 	case path == "bootstrap":
 		s.apiBootstrap(w, r)
 	case path == "setup":
