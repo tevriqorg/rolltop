@@ -30,6 +30,7 @@ import (
 	"rolltop/backend/imapclient"
 	"rolltop/backend/logging"
 	"rolltop/backend/plugins"
+	"rolltop/backend/provider"
 	"rolltop/backend/search"
 	"rolltop/backend/smtpclient"
 	"rolltop/backend/store"
@@ -502,7 +503,7 @@ func startApp(ctx context.Context, cfg config.Config, startup *startupState) (*a
 
 	startup.update("Services", "initializing sync and web services", 0, 1)
 	blobStore := blob.New(cfg.DataDir)
-	imapFetcher := &imapclient.Fetcher{MasterKey: cfg.MasterKey, MaxRawMessageBytes: cfg.MaxMessageBytes}
+	imapFetcher := &provider.IMAPProvider{Fetcher: &imapclient.Fetcher{MasterKey: cfg.MasterKey, MaxRawMessageBytes: cfg.MaxMessageBytes}}
 	syncSvc := &syncer.Service{
 		Store:         db,
 		Blobs:         blobStore,
