@@ -14,7 +14,7 @@ type Census = { account: { id: string }; message_count: number; estimated_raw_by
 type Data = { messages: Message[]; conversations: Conversation[]; census: Census[]; real_credentials: number; oauth_accounts: number };
 
 export function MockHub({ csrf, datePrefs, swipePreferences, navigate, addToast }: { csrf: string; datePrefs: DatePrefs; swipePreferences: SwipePreferences; navigate: (url: string) => void; addToast: AddToast }) {
-  const [data, setData] = useState<Data>({ messages: [], census: [], real_credentials: 0, oauth_accounts: 0 });
+  const [data, setData] = useState<Data>({ messages: [], conversations: [], census: [], real_credentials: 0, oauth_accounts: 0 });
   const [view, setView] = useState("inbox");
   const [account, setAccount] = useState("");
   const [provider, setProvider] = useState("mock");
