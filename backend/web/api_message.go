@@ -1038,14 +1038,27 @@ func (s *Server) apiSetMessageStarred(w http.ResponseWriter, r *http.Request, id
 	if !s.verifyCSRF(w, r) {
 		return
 	}
-	if s.syncer == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "IMAP sync is not configured")
-		return
-	}
 	var in struct {
 		Starred bool `json:"starred"`
 	}
 	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if mock, err := s.mutateMockMessage(r.Context(), cu.User.ID, id, "star", in.Starred); err != nil {
+		s.serverError(w, r, err)
+		return
+	} else if mock {
+		msg, err := s.store.GetMessageForUser(r.Context(), cu.User.ID, id)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		s.noteMailListChanged(cu.User.ID)
+		writeJSON(w, map[string]any{"ok": true, "message": apiMessageFromRecord(msg, msg.BodyText)})
+		return
+	}
+	if s.syncer == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "IMAP sync is not configured")
 		return
 	}
 	msg, err := s.syncer.SetStarredForMessage(r.Context(), cu.User.ID, id, in.Starred)
@@ -1225,10 +1238,10 @@ func (s *Server) threadViewsForMessageTimed(ctx context.Context, cu currentUser,
 		if timing != nil {
 			stop = timing.measure(&timing.readState)
 		}
-		if err := s.store.MarkMessagesReadForUser(ctx, cu.User.ID, unreadIDs, true, true); err == nil {
+		if realIDs, err := s.markMailRead(ctx, cu.User.ID, unreadIDs, true); err == nil {
 			markedRead = true
 			if s.syncer != nil {
-				s.queueReadStatePush(cu.User.ID, unreadIDs)
+				s.queueReadStatePush(cu.User.ID, realIDs)
 			}
 		}
 		stop()

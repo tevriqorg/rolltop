@@ -87,7 +87,7 @@ func (s *Store) updateMailAccount(ctx context.Context, a MailAccount) (MailAccou
 	}
 	res, err := s.mustDataDB(ctx, a.UserID).ExecContext(ctx, `UPDATE mail_accounts SET
 			email = ?, label = ?, host = ?, port = ?, username = ?, encrypted_password = ?, use_tls = ?, smtp_host = ?, smtp_port = ?, smtp_username = ?, encrypted_smtp_password = ?, smtp_use_tls = ?, mailbox = ?, sync_interval_minutes = ?, updated_at = ?
-		WHERE user_id = ? AND id = ?`,
+		WHERE user_id = ? AND id = ? AND NOT EXISTS (SELECT 1 FROM provider_sources ps WHERE ps.user_id = mail_accounts.user_id AND ps.account_id = mail_accounts.id)`,
 		a.Email, a.Label, a.Host, a.Port, a.Username, a.EncryptedPassword, boolInt(a.UseTLS), a.SMTPHost, a.SMTPPort, a.SMTPUsername, a.EncryptedSMTPPassword,
 		boolInt(a.SMTPUseTLS), a.Mailbox, a.SyncIntervalMinutes, nowUnix(), a.UserID, a.ID)
 	if err != nil {
@@ -152,7 +152,7 @@ func (s *Store) ListAccounts(ctx context.Context) ([]MailAccount, error) {
 }
 
 func mailAccountSelectSQL() string {
-	return `SELECT id, user_id, email, label, host, port, username, encrypted_password, use_tls, smtp_host, smtp_port, smtp_username, encrypted_smtp_password, smtp_use_tls, mailbox, sync_interval_minutes, created_at, updated_at FROM mail_accounts`
+	return `SELECT id, user_id, email, label, host, port, username, encrypted_password, use_tls, smtp_host, smtp_port, smtp_username, encrypted_smtp_password, smtp_use_tls, mailbox, sync_interval_minutes, created_at, updated_at FROM (SELECT * FROM mail_accounts ma WHERE NOT EXISTS (SELECT 1 FROM provider_sources ps WHERE ps.user_id = ma.user_id AND ps.account_id = ma.id))`
 }
 
 func scanMailAccounts(rows *sql.Rows) ([]MailAccount, error) {
