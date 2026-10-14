@@ -1016,3 +1016,61 @@
 .thread-tail {
   height: 18px;
 }
+
+.mail-ai-launch {
+  position: fixed;
+  right: 18px;
+  bottom: 76px;
+  z-index: 35;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-elevated);
+}
+
+.mail-ai-panel {
+  position: fixed;
+  z-index: 45;
+  right: 16px;
+  top: 76px;
+  bottom: 16px;
+  width: min(390px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-elevated);
+}
+
+.mail-ai-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.mail-ai-panel > header div { display: grid; gap: 2px; }
+.mail-ai-panel > header span { color: var(--muted); font-size: .78rem; }
+.mail-ai-transcript { flex: 1; overflow: auto; display: grid; align-content: start; gap: 10px; }
+.mail-ai-line { border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; background: var(--surface-subtle); }
+.mail-ai-line.user { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.mail-ai-line strong { font-size: .76rem; color: var(--muted); }
+.mail-ai-line p { margin: 4px 0 0; white-space: pre-wrap; line-height: 1.45; }
+.mail-ai-trace { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 8px 0; max-height: 150px; overflow: auto; }
+.mail-ai-trace summary { cursor: pointer; font-weight: 700; }
+.mail-ai-trace p { margin: 5px 0; font-size: .78rem; overflow-wrap: anywhere; color: var(--muted); }
+.mail-ai-trace p.error { color: var(--danger); }
+.mail-ai-confirm { display: grid; gap: 8px; border: 1px solid var(--border-strong); border-radius: 10px; padding: 10px; background: var(--surface-subtle); }
+.mail-ai-confirm code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .74rem; }
+.mail-ai-confirm div { display: flex; gap: 8px; }
+.mail-ai-panel form { display: grid; gap: 8px; }
+.mail-ai-panel textarea { width: 100%; resize: vertical; box-sizing: border-box; }
+
+@media (max-width: 680px) {
+  .mail-ai-panel { inset: 58px 8px 8px; width: auto; }
+  .mail-ai-launch { right: 12px; bottom: 68px; }
+}

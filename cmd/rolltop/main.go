@@ -519,21 +519,23 @@ func startApp(ctx context.Context, cfg config.Config, startup *startupState) (*a
 	}
 	syncRunner := syncer.NewRunnerWithContext(ctx, syncSvc)
 	webServer, err := web.New(web.Options{
-		Store:          db,
-		Blobs:          blobStore,
-		Search:         searchSvc,
-		Syncer:         syncSvc,
-		SyncRunner:     syncRunner,
-		MasterKey:      cfg.MasterKey,
-		DataDir:        cfg.DataDir,
-		DatabasePath:   cfg.DatabasePath,
-		IndexPath:      cfg.IndexPath,
-		PluginDir:      cfg.PluginDir,
-		SessionTTL:     cfg.SessionTTL,
-		CookieSecure:   cfg.CookieSecure,
-		WebhookToken:   cfg.WebhookToken,
-		PublicBaseURL:  cfg.PublicBaseURL,
-		TrustedProxies: cfg.TrustedProxies,
+		Store:             db,
+		Blobs:             blobStore,
+		Search:            searchSvc,
+		Syncer:            syncSvc,
+		SyncRunner:        syncRunner,
+		MasterKey:         cfg.MasterKey,
+		DataDir:           cfg.DataDir,
+		DatabasePath:      cfg.DatabasePath,
+		IndexPath:         cfg.IndexPath,
+		PluginDir:         cfg.PluginDir,
+		SessionTTL:        cfg.SessionTTL,
+		CookieSecure:      cfg.CookieSecure,
+		WebhookToken:      cfg.WebhookToken,
+		PublicBaseURL:     cfg.PublicBaseURL,
+		TrustedProxies:    cfg.TrustedProxies,
+		MailAIURL:         cfg.MailAIURL,
+		MailAISharedToken: cfg.MailAISharedToken,
 	})
 	if err != nil {
 		return nil, err

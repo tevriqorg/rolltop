@@ -41,6 +41,7 @@ jobs:
             echo "ROLLTOP_VERSION=$version"
             echo "ROLLTOP_BUILD_DATE=$build_date"
             echo "ROLLTOP_BINARY=rolltop-${version}-darwin-arm64"
+            echo "MAIL_AI_BINARY=mail-ai-${version}-darwin-arm64"
           } >> "$GITHUB_ENV"
 
       - name: Build macOS arm64 Backend
@@ -59,6 +60,22 @@ jobs:
         with:
           name: ${{ env.ROLLTOP_BINARY }}
           path: build-artifacts/${{ env.ROLLTOP_BINARY }}
+          if-no-files-found: error
+
+      - name: Build macOS arm64 Mail AI
+        shell: bash
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+            -trimpath -ldflags="-s -w" \
+            -o "build-artifacts/${MAIL_AI_BINARY}" \
+            ./cmd/mail-ai
+          file "build-artifacts/${MAIL_AI_BINARY}"
+
+      - name: Upload macOS arm64 Mail AI
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ env.MAIL_AI_BINARY }}
+          path: build-artifacts/${{ env.MAIL_AI_BINARY }}
           if-no-files-found: error
 
   test-and-build:
@@ -444,6 +461,17 @@ jobs:
           path: build-artifacts/${{ steps.build-meta.outputs.binary }}
           if-no-files-found: error
 
+      - name: Build Mail AI Backend Binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o "build-artifacts/mail-ai-${ROLLTOP_VERSION}-linux-amd64" ./cmd/mail-ai
+
+      - name: Upload Mail AI Backend Binary
+        uses: actions/upload-artifact@v5
+        with:
+          name: mail-ai-${{ steps.build-meta.outputs.version }}-linux-amd64
+          path: build-artifacts/mail-ai-${{ steps.build-meta.outputs.version }}-linux-amd64
+          if-no-files-found: error
+
       - name: Build Docker Image
         run: |
           docker build \
@@ -457,6 +485,16 @@ jobs:
             --label "org.opencontainers.image.created=${ROLLTOP_BUILD_DATE}" \
             --label "org.opencontainers.image.version=${ROLLTOP_VERSION}" \
             -t "${ROLLTOP_IMAGE}:${ROLLTOP_VERSION}" \
+            .
+
+      - name: Build Mail AI Docker Image
+        run: |
+          docker build \
+            -f Dockerfile.mail-ai \
+            --label "org.opencontainers.image.title=rolltop-mail-ai" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "${ROLLTOP_IMAGE}-mail-ai:${ROLLTOP_VERSION}" \
             .
 
       - name: Verify Docker DAV Plugin Modules

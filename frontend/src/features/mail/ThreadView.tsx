@@ -29,6 +29,7 @@ import { TrustImageSourceAction } from "../../plugins/trustedImageSources/TrustI
 import type { RuntimeMessageDetailsPlugin, RuntimePlugin } from "../../plugins/runtime";
 import { threadSecurityPlugin, type ThreadSecurityDecryptedAttachment, type ThreadSecurityGossipKey, type ThreadSecurityOpenResult, type ThreadSecuritySignatureStatus } from "../../plugins/threadSecurity";
 import { SnoozeControl } from "./SnoozeControl";
+import { MailSideChat } from "./MailSideChat";
 import { EmailFrame } from "./EmailFrame";
 
 type MessageLoadStatus = {
@@ -2101,6 +2102,7 @@ export function ThreadView({
           })}
         </section>
       ) : null}
+      <MailSideChat csrf={csrf} messageID={currentMessageID} />
     </>
   );
 }

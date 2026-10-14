@@ -69,6 +69,11 @@ type Options struct {
 	// DisableBackgroundWorkers is used by focused embeddings and tests that
 	// explicitly drive scheduler behavior themselves.
 	DisableBackgroundWorkers bool
+	// MailAIURL enables the optional Side Chat proxy. The shared token is only
+	// used server-to-server and is never serialized to browser bootstrap data.
+	MailAIURL         string
+	MailAISharedToken string
+	MailAIHTTPClient  *http.Client
 }
 
 // Server owns HTTP handlers, shared services, session settings, event fanout, and lightweight caches.
@@ -133,14 +138,17 @@ type Server struct {
 	// backgroundCtx bounds every fire-and-forget goroutine the server spawns
 	// (bulk read-state pushes and similar). Canceling it at Close stops new
 	// work and lets in-flight iterations exit promptly.
-	backgroundCtx    context.Context
-	backgroundCancel context.CancelFunc
-	readStatePushes  *readStatePushQueue
-	loginThrottle    *loginThrottle
-	mailDiscovery    mailSettingsDiscoverer
-	dummyVerifyOnce  sync.Once
-	dummyHash        string
-	startedAt        time.Time
+	backgroundCtx     context.Context
+	backgroundCancel  context.CancelFunc
+	readStatePushes   *readStatePushQueue
+	loginThrottle     *loginThrottle
+	mailDiscovery     mailSettingsDiscoverer
+	dummyVerifyOnce   sync.Once
+	dummyHash         string
+	startedAt         time.Time
+	mailAIURL         string
+	mailAISharedToken string
+	mailAIHTTPClient  *http.Client
 }
 
 type contextKey string
@@ -355,6 +363,12 @@ func New(opts Options) (*Server, error) {
 		loginThrottle:             newLoginThrottle(),
 		mailDiscovery:             maildiscovery.New(),
 		startedAt:                 time.Now().UTC(),
+		mailAIURL:                 strings.TrimRight(strings.TrimSpace(opts.MailAIURL), "/"),
+		mailAISharedToken:         strings.TrimSpace(opts.MailAISharedToken),
+		mailAIHTTPClient:          opts.MailAIHTTPClient,
+	}
+	if srv.mailAIHTTPClient == nil {
+		srv.mailAIHTTPClient = &http.Client{Timeout: 95 * time.Second}
 	}
 	if opts.Syncer != nil {
 		opts.Syncer.Notify = srv.notifyUserChanged

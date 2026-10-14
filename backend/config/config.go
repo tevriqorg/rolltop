@@ -39,8 +39,10 @@ type Config struct {
 	// TrustedProxies may supply client IP forwarding headers. Empty trusts none.
 	TrustedProxies []netip.Prefix
 	// MaxMessageBytes caps the RFC822 size of messages mirrored in full.
-	MaxMessageBytes int64
-	LogLevel        string
+	MaxMessageBytes   int64
+	LogLevel          string
+	MailAIURL         string
+	MailAISharedToken string
 }
 
 const defaultDataDir = "/data"
@@ -107,6 +109,17 @@ func Load() (Config, error) {
 	if maxMessageBytes < minMessageBytes {
 		return Config{}, fmt.Errorf("ROLLTOP_MAX_MESSAGE_BYTES must be at least %d bytes", minMessageBytes)
 	}
+	mailAIURL := strings.TrimRight(strings.TrimSpace(os.Getenv("ROLLTOP_MAIL_AI_URL")), "/")
+	mailAISharedToken := strings.TrimSpace(os.Getenv("ROLLTOP_MAIL_AI_SHARED_TOKEN"))
+	if mailAIURL != "" && mailAISharedToken == "" {
+		return Config{}, errors.New("ROLLTOP_MAIL_AI_SHARED_TOKEN is required when ROLLTOP_MAIL_AI_URL is set")
+	}
+	if mailAIURL != "" {
+		u, err := url.Parse(mailAIURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return Config{}, errors.New("ROLLTOP_MAIL_AI_URL must be an absolute http(s) URL")
+		}
+	}
 	logLevel := strings.ToLower(env("ROLLTOP_LOG_LEVEL", "info"))
 	switch logLevel {
 	case "info", "debug":
@@ -131,6 +144,8 @@ func Load() (Config, error) {
 		TrustedProxies:    trustedProxies,
 		MaxMessageBytes:   maxMessageBytes,
 		LogLevel:          logLevel,
+		MailAIURL:         mailAIURL,
+		MailAISharedToken: mailAISharedToken,
 	}, nil
 }
 
