@@ -55,8 +55,8 @@ function compact(value: unknown) {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
-export function MailSideChat({ csrf, messageID }: { csrf: string; messageID: number }) {
-  const [open, setOpen] = useState(false);
+export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: string; messageID: number; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
