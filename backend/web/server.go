@@ -862,8 +862,13 @@ func (s *Server) refreshMailboxStatusesAsync(userID int64) {
 			s.statusMu.Unlock()
 			return
 		}
+		// A successful discovery can still leave a mailbox without a usable
+		// STATUS snapshot (for example a provider-native compatibility mailbox
+		// or an IMAP folder whose STATUS probe was skipped). Rate-limit the next
+		// passive attempt even when status_checked_at remains zero so an SSE
+		// notification cannot feed back into an unbounded refresh loop.
 		s.statusMu.Lock()
-		delete(s.statusRefreshBlockedUntil, userID)
+		s.statusRefreshBlockedUntil[userID] = time.Now().Add(mailboxStatusRefreshInterval)
 		s.statusMu.Unlock()
 	}()
 }

@@ -338,6 +338,15 @@ func (s *Service) DiscoverMailboxes(ctx context.Context, userID int64) (int, err
 	if err != nil {
 		return 0, err
 	}
+	// Provider-native sources (Mock today; Gmail/Outlook later) deliberately do
+	// not appear in ListMailAccountsForUser. An empty legacy IMAP account set
+	// therefore means there is nothing to discover and, critically, nothing
+	// user-visible changed. Do not emit a mail-generation notification for a
+	// no-op discovery: the chrome status refresher consumes that notification
+	// and would otherwise schedule another discovery immediately.
+	if len(accounts) == 0 {
+		return 0, nil
+	}
 	defer s.notify(userID)
 	count := 0
 	for _, account := range accounts {
