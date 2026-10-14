@@ -48,6 +48,9 @@ func TestAgentUsesHubToolsAndStreamsDraftClosure(t *testing.T) {
 	defer hub.Close()
 
 	s := &server{cfg: config{HubURL: hub.URL, Shared: "gate-e-secret", ModelURL: model.URL, Model: "test-model", HTTPClient: model.Client()}}
+	if err := s.initModelConfig(); err != nil {
+		t.Fatal(err)
+	}
 	request := mailai.ChatRequest{UserID: 7, Prompt: "找一下项目计划，然后帮我写回复", Context: mailai.CurrentMailContext{Provider: "mock", Account: "personal", MessageID: 1, ThreadID: "project", Subject: "项目计划", From: "sender@example.invalid", Body: "你好"}}
 	body, _ := json.Marshal(request)
 	r := httptest.NewRequest(http.MethodPost, "/chat", bytes.NewReader(body))
@@ -91,6 +94,9 @@ func TestSideEffectRequiresSignedConfirmation(t *testing.T) {
 	defer hub.Close()
 
 	s := &server{cfg: config{HubURL: hub.URL, Shared: "gate-e-secret", ModelURL: model.URL, Model: "test-model", HTTPClient: model.Client()}}
+	if err := s.initModelConfig(); err != nil {
+		t.Fatal(err)
+	}
 	input := mailai.ChatRequest{UserID: 9, Prompt: "加 follow-up 标签", Context: mailai.CurrentMailContext{MessageID: 3, Provider: "mock"}}
 	data, _ := json.Marshal(input)
 	r := httptest.NewRequest(http.MethodPost, "/chat", bytes.NewReader(data))
