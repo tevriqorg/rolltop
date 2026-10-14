@@ -164,8 +164,7 @@ func (s *server) modelConfigHandler(w http.ResponseWriter, r *http.Request) {
 		apiKey := currentKey
 		if in.APIKey != nil {
 			apiKey = strings.TrimSpace(*in.APIKey)
-		}
-		if in.ClearAPIKey {
+		} else if in.ClearAPIKey {
 			apiKey = ""
 		}
 		if err := s.persistModelConfig(baseURL, apiKey, model); err != nil {

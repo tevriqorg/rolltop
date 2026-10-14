@@ -12,6 +12,7 @@ export type MailAIEvent = {
 type ChatLine = { id: number; role: "user" | "assistant"; text: string };
 type TraceLine = { id: number; text: string; kind: "tool" | "status" | "error" };
 type PendingAction = { id: number; tool: string; token: string; args: unknown; busy: boolean };
+type ModelConfig = { available?: boolean; configured: boolean; can_configure?: boolean; base_url?: string; model?: string; api_key_configured?: boolean };
 
 export function parseMailAIFrames(buffer: string): { events: MailAIEvent[]; rest: string } {
   const normalized = buffer.replace(/\r\n/g, "\n");
@@ -57,7 +58,13 @@ function compact(value: unknown) {
 
 export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: string; messageID: number; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
-  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [baseURL, setBaseURL] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setAPIKey] = useState("");
+  const [clearAPIKey, setClearAPIKey] = useState(false);
+  const [configBusy, setConfigBusy] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [lines, setLines] = useState<ChatLine[]>([]);
@@ -67,10 +74,15 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/mail-ai/status", { headers: { Accept: "application/json" }, cache: "no-store" })
-      .then(async (response) => response.ok ? response.json() as Promise<{ configured: boolean }> : { configured: false })
-      .then((value) => { if (active) setConfigured(Boolean(value.configured)); })
-      .catch(() => { if (active) setConfigured(false); });
+    void fetch("/api/mail-ai/model-config", { headers: { Accept: "application/json" }, cache: "no-store" })
+      .then(async (response): Promise<ModelConfig> => response.ok ? await response.json() as ModelConfig : { available: false, configured: false })
+      .then((value) => {
+        if (!active) return;
+        setModelConfig(value);
+        setBaseURL(value.base_url || "");
+        setModel(value.model || "");
+      })
+      .catch(() => { if (active) setModelConfig({ available: false, configured: false, can_configure: false }); });
     return () => { active = false; };
   }, []);
 
@@ -104,6 +116,40 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         break;
       default:
         break;
+    }
+  }
+
+  async function saveModelConfig() {
+    if (configBusy) return;
+    const cleanBaseURL = baseURL.trim();
+    const cleanModel = model.trim();
+    if (!cleanBaseURL || !cleanModel) {
+      pushTrace("Base URL and model are required.", "error");
+      return;
+    }
+    setConfigBusy(true);
+    try {
+      const body: Record<string, unknown> = { base_url: cleanBaseURL, model: cleanModel };
+      if (apiKey.trim()) body.api_key = apiKey.trim();
+      else if (clearAPIKey) body.clear_api_key = true;
+      const response = await fetch("/api/mail-ai/model-config", {
+        method: "PUT",
+        headers: { Accept: "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify(body)
+      });
+      const value = await response.json().catch(() => ({})) as ModelConfig & { error?: string };
+      if (!response.ok) throw new Error(value.error || `Model settings failed (${response.status})`);
+      setModelConfig({ ...value, available: true });
+      setBaseURL(value.base_url || cleanBaseURL);
+      setModel(value.model || cleanModel);
+      setAPIKey("");
+      setClearAPIKey(false);
+      setSettingsOpen(false);
+      pushTrace(`Model configured ✓ ${value.model || cleanModel}`);
+    } catch (error) {
+      pushTrace(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setConfigBusy(false);
     }
   }
 
@@ -147,15 +193,37 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
     }
   }
 
+  const configured = Boolean(modelConfig?.configured);
+  const statusText = modelConfig === null
+    ? "Checking…"
+    : modelConfig.available === false
+      ? "Unavailable"
+      : configured
+        ? (modelConfig.model || "Ready")
+        : "Model not configured";
+
   if (!open) {
     return <button className="mail-ai-launch" type="button" onClick={() => setOpen(true)} disabled={messageID <= 0} title="Open Mail AI Side Chat">AI</button>;
   }
   return (
     <aside className="mail-ai-panel" aria-label="Mail AI Side Chat">
       <header>
-        <div><strong>Mail AI</strong><span>{configured === false ? "Not configured" : configured === true ? "Mock mail context" : "Checking…"}</span></div>
-        <button className="ghost" type="button" onClick={() => setOpen(false)} aria-label="Close Mail AI">×</button>
+        <div><strong>Mail AI</strong><span>{statusText}</span></div>
+        <div className="mail-ai-header-actions">
+          {modelConfig?.can_configure ? <button className="ghost" type="button" onClick={() => setSettingsOpen((value) => !value)} aria-expanded={settingsOpen}>Model</button> : null}
+          <button className="ghost" type="button" onClick={() => setOpen(false)} aria-label="Close Mail AI">×</button>
+        </div>
       </header>
+      {settingsOpen ? <section className="mail-ai-settings" aria-label="Mail AI model settings">
+        <form onSubmit={(event) => { event.preventDefault(); void saveModelConfig(); }}>
+          <label>Base URL<input type="url" value={baseURL} onChange={(event) => setBaseURL(event.target.value)} placeholder="https://api.example.com/v1" autoComplete="off" /></label>
+          <label>Model<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="model-name" autoComplete="off" /></label>
+          <label>API key<input type="password" value={apiKey} onChange={(event) => setAPIKey(event.target.value)} placeholder={modelConfig?.api_key_configured ? "Configured — leave blank to keep" : "Optional for keyless endpoints"} autoComplete="off" /></label>
+          {modelConfig?.api_key_configured ? <label className="mail-ai-clear-key"><input type="checkbox" checked={clearAPIKey} onChange={(event) => setClearAPIKey(event.target.checked)} />Clear saved API key</label> : null}
+          <small>The API key is stored by Mail AI on the server and is never returned to the browser.</small>
+          <button type="submit" disabled={configBusy || !baseURL.trim() || !model.trim()}>{configBusy ? "Saving…" : "Save model"}</button>
+        </form>
+      </section> : null}
       <div className="mail-ai-transcript" aria-live="polite">
         {lines.length === 0 ? <p className="muted">Ask about this mail, search history, or draft a reply. Drafts are never sent automatically.</p> : null}
         {lines.map((line) => <div className={`mail-ai-line ${line.role}`} key={line.id}><strong>{line.role === "user" ? "You" : "AI"}</strong><p>{line.text || (busy ? "…" : "")}</p></div>)}
@@ -166,9 +234,10 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         <div><button type="button" disabled={action.busy} onClick={() => void confirm(action)}>Confirm</button><button type="button" className="secondary" onClick={() => setPending((current) => current.filter((item) => item.id !== action.id))}>Cancel</button></div>
       </section>)}
       <form onSubmit={(event) => { event.preventDefault(); void send(); }}>
-        <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask about this message…" rows={3} disabled={busy || configured === false} />
-        <button type="submit" disabled={busy || configured === false || !prompt.trim()}>{busy ? "Working…" : "Send"}</button>
+        <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={configured ? "Ask about this message…" : "Configure a model first…"} rows={3} disabled={busy || !configured} />
+        <button type="submit" disabled={busy || !configured || !prompt.trim()}>{busy ? "Working…" : "Send"}</button>
       </form>
     </aside>
   );
+
 }

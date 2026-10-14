@@ -16,6 +16,7 @@ type mailAIModelConfig struct {
 	BaseURL          string `json:"base_url"`
 	Model            string `json:"model"`
 	APIKeyConfigured bool   `json:"api_key_configured"`
+	CanConfigure     bool   `json:"can_configure,omitempty"`
 }
 
 type mailAIModelConfigUpdate struct {
@@ -33,7 +34,8 @@ func (s *Server) apiMailAIModelConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if _, ok := s.requireAPIAuth(w, r); !ok {
+		cu, ok := s.requireAPIAuth(w, r)
+		if !ok {
 			return
 		}
 		cfg, err := s.mailAIModelConfigRequest(r.Context(), http.MethodGet, nil)
@@ -41,6 +43,7 @@ func (s *Server) apiMailAIModelConfig(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusServiceUnavailable, "mail-ai is unavailable")
 			return
 		}
+		cfg.CanConfigure = cu.User.IsAdmin
 		writeJSON(w, cfg)
 	case http.MethodPut:
 		if _, ok := s.requireAPIAdmin(w, r); !ok {

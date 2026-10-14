@@ -1055,6 +1055,14 @@
 
 .mail-ai-panel > header div { display: grid; gap: 2px; }
 .mail-ai-panel > header span { color: var(--muted); font-size: .78rem; }
+.mail-ai-panel > header .mail-ai-header-actions { display: flex; gap: 6px; align-items: center; }
+.mail-ai-settings { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--surface-subtle); }
+.mail-ai-settings form { display: grid; gap: 8px; }
+.mail-ai-settings label { display: grid; gap: 4px; font-size: .78rem; font-weight: 700; }
+.mail-ai-settings input { width: 100%; box-sizing: border-box; }
+.mail-ai-settings small { color: var(--muted); line-height: 1.35; }
+.mail-ai-settings .mail-ai-clear-key { display: flex; gap: 7px; align-items: center; font-weight: 500; }
+.mail-ai-settings .mail-ai-clear-key input { width: auto; }
 .mail-ai-transcript { flex: 1; overflow: auto; display: grid; align-content: start; gap: 10px; }
 .mail-ai-line { border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; background: var(--surface-subtle); }
 .mail-ai-line.user { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
