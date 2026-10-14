@@ -22,16 +22,20 @@ import (
 )
 
 type config struct {
-	Addr       string
-	HubURL     string
-	Shared     string
-	ModelURL   string
-	ModelKey   string
-	Model      string
-	HTTPClient *http.Client
+	Addr            string
+	HubURL          string
+	Shared          string
+	ModelURL        string
+	ModelKey        string
+	Model           string
+	ModelConfigFile string
+	HTTPClient      *http.Client
 }
 
-type server struct{ cfg config }
+type server struct {
+	cfg   config
+	model modelRuntime
+}
 
 type modelMessage struct {
 	Role       string          `json:"role"`
@@ -64,20 +68,25 @@ type pendingAction struct {
 
 func main() {
 	cfg := config{
-		Addr:       env("MAIL_AI_ADDR", ":8090"),
-		HubURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("MAIL_AI_HUB_URL")), "/"),
-		Shared:     strings.TrimSpace(os.Getenv("MAIL_AI_SHARED_TOKEN")),
-		ModelURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("MAIL_AI_MODEL_BASE_URL")), "/"),
-		ModelKey:   strings.TrimSpace(os.Getenv("MAIL_AI_MODEL_API_KEY")),
-		Model:      strings.TrimSpace(os.Getenv("MAIL_AI_MODEL")),
-		HTTPClient: &http.Client{Timeout: 90 * time.Second},
+		Addr:            env("MAIL_AI_ADDR", ":8090"),
+		HubURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MAIL_AI_HUB_URL")), "/"),
+		Shared:          strings.TrimSpace(os.Getenv("MAIL_AI_SHARED_TOKEN")),
+		ModelURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("MAIL_AI_MODEL_BASE_URL")), "/"),
+		ModelKey:        strings.TrimSpace(os.Getenv("MAIL_AI_MODEL_API_KEY")),
+		Model:           strings.TrimSpace(os.Getenv("MAIL_AI_MODEL")),
+		ModelConfigFile: strings.TrimSpace(os.Getenv("MAIL_AI_MODEL_CONFIG_FILE")),
+		HTTPClient:      &http.Client{Timeout: 90 * time.Second},
 	}
 	if err := validateConfig(cfg); err != nil {
 		log.Fatal(err)
 	}
 	s := &server{cfg: cfg}
+	if err := s.initModelConfig(); err != nil {
+		log.Fatal(err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
+	mux.HandleFunc("/config", s.modelConfigHandler)
 	mux.HandleFunc("/chat", s.chat)
 	mux.HandleFunc("/confirm", s.confirm)
 	log.Printf("mail-ai listening on %s", cfg.Addr)
@@ -98,8 +107,13 @@ func validateConfig(c config) error {
 	if c.HubURL == "" {
 		return errors.New("MAIL_AI_HUB_URL is required")
 	}
-	if c.ModelURL == "" || c.Model == "" {
-		return errors.New("MAIL_AI_MODEL_BASE_URL and MAIL_AI_MODEL are required")
+	if (c.ModelURL == "") != (c.Model == "") {
+		return errors.New("MAIL_AI_MODEL_BASE_URL and MAIL_AI_MODEL must be set together")
+	}
+	if c.ModelURL != "" {
+		if _, _, err := normalizeModelConfig(c.ModelURL, c.Model); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -109,7 +123,8 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "model": s.cfg.Model})
+	baseURL, _, model := s.currentModelConfig()
+	writeJSON(w, 200, map[string]any{"ok": true, "configured": baseURL != "" && model != "", "model": model})
 }
 
 func (s *server) authorized(r *http.Request) bool {
@@ -130,6 +145,11 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.authorized(r) {
 		http.Error(w, "unauthorized", 401)
+		return
+	}
+	baseURL, _, model := s.currentModelConfig()
+	if baseURL == "" || model == "" {
+		http.Error(w, "model is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	var in mailai.ChatRequest
@@ -236,15 +256,19 @@ func systemPrompt(c mailai.CurrentMailContext) string {
 }
 
 func (s *server) complete(ctx context.Context, messages []modelMessage) (modelMessage, error) {
-	payload := map[string]any{"model": s.cfg.Model, "messages": messages, "tools": toolDefinitions(), "tool_choice": "auto", "stream": false}
+	baseURL, apiKey, model := s.currentModelConfig()
+	if baseURL == "" || model == "" {
+		return modelMessage{}, errors.New("model is not configured")
+	}
+	payload := map[string]any{"model": model, "messages": messages, "tools": toolDefinitions(), "tool_choice": "auto", "stream": false}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.ModelURL+"/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return modelMessage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if s.cfg.ModelKey != "" {
-		req.Header.Set("Authorization", "Bearer "+s.cfg.ModelKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	res, err := s.cfg.HTTPClient.Do(req)
 	if err != nil {
