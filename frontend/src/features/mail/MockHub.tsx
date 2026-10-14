@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { MessageList } from "./MailViews";
 import type { Conversation, SwipePreferences } from "../../types";
 import type { AddToast, DatePrefs } from "../../appTypes";
+import { MailSideChat } from "./MailSideChat";
 
 
 type Message = {
@@ -91,6 +92,7 @@ export function MockHub({ csrf, datePrefs, swipePreferences, navigate, addToast 
         <button onClick={() => navigate(`/messages/${m.id}?return=${encodeURIComponent("/mock")}`)}>Open thread and attachments</button>
       </article>)}
     </section>}
+    {selected ? <MailSideChat csrf={csrf} messageID={selected.id} /> : null}
     <section aria-label="Storage Census"><h2>Storage Census</h2>
       <p>Synthetic metadata before raw ingestion. Evidence bytes are a capacity estimate. Disk budget: 1.5 × raw bytes.</p>
       <table><thead><tr><th>Account</th><th>Messages</th><th>Estimated raw bytes</th><th>Expected Evidence bytes</th><th>Recommended free disk</th></tr></thead>

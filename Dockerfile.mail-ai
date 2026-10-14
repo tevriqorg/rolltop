@@ -1,0 +1,18 @@
+FROM golang:1.25-alpine AS build
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY backend/mailai ./backend/mailai
+COPY cmd/mail-ai ./cmd/mail-ai
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mail-ai ./cmd/mail-ai
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S -g 10002 mailai \
+    && adduser -S -D -H -u 10002 -G mailai -s /sbin/nologin mailai
+COPY --from=build /out/mail-ai /usr/local/bin/mail-ai
+USER mailai
+EXPOSE 8090
+ENV MAIL_AI_ADDR=:8090
+ENTRYPOINT ["/usr/local/bin/mail-ai"]

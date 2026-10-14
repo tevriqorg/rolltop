@@ -196,3 +196,24 @@ func TestLoadValidatesLogLevel(t *testing.T) {
 		t.Fatal("expected error for unknown log level")
 	}
 }
+
+func TestMailAIConfigRequiresServerSideSharedTokenAndAbsoluteURL(t *testing.T) {
+	t.Setenv("ROLLTOP_MASTER_KEY", testMasterKey)
+	t.Setenv("ROLLTOP_MAIL_AI_URL", "http://127.0.0.1:8090/")
+	t.Setenv("ROLLTOP_MAIL_AI_SHARED_TOKEN", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ROLLTOP_MAIL_AI_SHARED_TOKEN") {
+		t.Fatalf("missing mail-ai shared token error=%v", err)
+	}
+	t.Setenv("ROLLTOP_MAIL_AI_SHARED_TOKEN", "server-only-secret")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MailAIURL != "http://127.0.0.1:8090" || cfg.MailAISharedToken != "server-only-secret" {
+		t.Fatalf("mail-ai config=%q token=%q", cfg.MailAIURL, cfg.MailAISharedToken)
+	}
+	t.Setenv("ROLLTOP_MAIL_AI_URL", "relative-sidecar")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "absolute http(s) URL") {
+		t.Fatalf("relative mail-ai URL error=%v", err)
+	}
+}
