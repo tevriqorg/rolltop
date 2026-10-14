@@ -37,7 +37,11 @@ export function MockHub({ csrf, datePrefs, swipePreferences, navigate, addToast 
     let active = true;
     setError("");
     void getData(new URLSearchParams({ view, provider, account, label, q: search }))
-      .then(value => { if (active) setData(value); })
+      .then(value => {
+        if (!active) return;
+        setData(value);
+        setSelected(current => (current ? value.messages.find(message => message.id === current.id) : undefined) || value.messages[0] || null);
+      })
       .catch(e => { if (active) setError(String(e)); });
     return () => { active = false; };
   }, [view, provider, account, label, search, revision]);
@@ -92,7 +96,7 @@ export function MockHub({ csrf, datePrefs, swipePreferences, navigate, addToast 
         <button onClick={() => navigate(`/messages/${m.id}?return=${encodeURIComponent("/mock")}`)}>Open thread and attachments</button>
       </article>)}
     </section>}
-    {selected ? <MailSideChat csrf={csrf} messageID={selected.id} /> : null}
+    {selected ? <MailSideChat csrf={csrf} messageID={selected.id} defaultOpen /> : null}
     <section aria-label="Storage Census"><h2>Storage Census</h2>
       <p>Synthetic metadata before raw ingestion. Evidence bytes are a capacity estimate. Disk budget: 1.5 × raw bytes.</p>
       <table><thead><tr><th>Account</th><th>Messages</th><th>Estimated raw bytes</th><th>Expected Evidence bytes</th><th>Recommended free disk</th></tr></thead>

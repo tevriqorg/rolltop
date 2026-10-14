@@ -26,6 +26,8 @@ it("shows census before sync, applies unified filters, opens full threads, and p
     await act(async () => { root.render(createElement(MockHub, { csrf: "csrf-test", datePrefs: {} as any, swipePreferences: {} as any, navigate, addToast: vi.fn() })); });
     expect(container.textContent).toContain("Real credentials: 0 · OAuth: 0");
     expect(container.querySelector('[aria-label="Storage Census"]')?.textContent).toContain("53477376");
+    expect(container.querySelector('[aria-label="Mail AI Side Chat"]')).toBeTruthy();
+    expect(container.textContent).toContain("项目计划");
     for (const title of ["Unified Inbox", "All Mail", "Unread", "Starred"]) expect(container.textContent).toContain(title);
     await click("Sync MockProvider");
     const sync = fetchMock.mock.calls.find(([url]) => url === "/api/mock-hub/sync")!;
