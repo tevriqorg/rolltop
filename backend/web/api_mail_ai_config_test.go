@@ -48,7 +48,7 @@ func TestMailAIModelConfigIsAdminOnlyAndNeverReturnsAPIKey(t *testing.T) {
 		r.AddCookie(&http.Cookie{Name: csrfCookie, Value: csrf})
 		r.Header.Set("X-CSRF-Token", s.csrfForBase(csrf))
 		w := httptest.NewRecorder()
-		s.handleAPI(w, r)
+		s.apiMailAIModelConfig(w, r)
 		return w
 	}
 	if w := put(admin, "admin-csrf"); w.Code != http.StatusOK || strings.Contains(w.Body.String(), secret) {
@@ -65,7 +65,7 @@ func TestMailAIModelConfigIsAdminOnlyAndNeverReturnsAPIKey(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/api/mail-ai/model-config", nil)
 		r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: actor}))
 		w := httptest.NewRecorder()
-		s.handleAPI(w, r)
+		s.apiMailAIModelConfig(w, r)
 		return w
 	}
 	if w := get(admin); w.Code != http.StatusOK || strings.Contains(w.Body.String(), secret) || !strings.Contains(w.Body.String(), `"can_configure":true`) {
