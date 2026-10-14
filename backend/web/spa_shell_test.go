@@ -72,3 +72,29 @@ func TestHandleAppServesNeutralShellWithoutStartupData(t *testing.T) {
 		t.Fatalf("personalized vary = %q, want *", got)
 	}
 }
+
+func TestHandlerServesMockSPARoute(t *testing.T) {
+	dir := t.TempDir()
+	distDir := filepath.Join(dir, frontendDistDir)
+	if err := os.MkdirAll(distDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "index.html"), []byte(`<!doctype html><html><head><meta name="rolltop-startup" /></head><body><div id="root">mock-shell</div></body></html>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	server := &Server{startedAt: time.Now()}
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mock?shell=1", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "mock-shell") {
+		t.Fatalf("/mock status = %d body = %q", rec.Code, rec.Body.String())
+	}
+}
