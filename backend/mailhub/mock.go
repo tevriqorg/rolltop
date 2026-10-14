@@ -226,6 +226,15 @@ func (s Service) Messages(ctx context.Context, userID int64, f Filter) ([]Messag
 		if e = json.Unmarshal([]byte(meta.Labels), &m.Labels); e != nil {
 			return nil, e
 		}
+		// Keep the browser contract array-shaped even when provider metadata was
+		// persisted from a nil slice (JSON null). UI filters and provenance views
+		// should never need provider-specific null checks for folders or labels.
+		if m.Folders == nil {
+			m.Folders = []string{}
+		}
+		if m.Labels == nil {
+			m.Labels = []string{}
+		}
 		if f.Label != "" && !slices.Contains(m.Labels, f.Label) && !slices.Contains(m.Folders, f.Label) {
 			continue
 		}
