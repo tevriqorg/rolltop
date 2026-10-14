@@ -436,6 +436,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/android/", s.handleFrontendAsset)
 	mux.HandleFunc("/setup", s.handleApp)
 	mux.HandleFunc("/login", s.handleApp)
+	mux.HandleFunc("/mock", s.handleApp)
 	mux.HandleFunc("/mail", s.handleApp)
 	mux.HandleFunc("/mail/", s.handleApp)
 	mux.HandleFunc("/snoozes", s.handleApp)
