@@ -42,6 +42,40 @@ type blockingStatusFetcher struct {
 	once    sync.Once
 }
 
+func TestDiscoverMailboxesProviderOnlyDoesNotNotify(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "rolltop.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := db.CreateUser(ctx, "provider-only@example.test", "Provider Only", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.EnsureMockSource(ctx, user.ID, "personal"); err != nil {
+		t.Fatal(err)
+	}
+	notifications := 0
+	service := &syncer.Service{
+		Store:   db,
+		Blobs:   blob.New(dir),
+		Fetcher: &fakeFetcher{},
+		Notify:  func(int64) { notifications++ },
+	}
+	count, err := service.DiscoverMailboxes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("discovered %d legacy mailboxes, want 0", count)
+	}
+	if notifications != 0 {
+		t.Fatalf("notifications = %d, want 0 for provider-only no-op discovery", notifications)
+	}
+}
+
 func TestDiscoverMailboxesPreservesJunkSpecialUseRole(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

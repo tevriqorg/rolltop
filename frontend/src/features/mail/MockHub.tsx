@@ -79,18 +79,18 @@ export function MockHub({ csrf, datePrefs, swipePreferences, navigate, addToast 
     <h2>Source actions</h2>
     <ul>{data.messages.map(m => <li key={m.id}>
       <button onClick={() => setSelected(m)}>{m.starred ? "★ " : ""}{m.read ? "" : "● "}{m.subject}</button>
-      <span> {m.provider} / {m.account} · {m.folders.join(", ")} · {m.labels.join(", ")}{m.oversized ? " · Oversized stub" : ""}</span>
+      <span> {m.provider} / {m.account} · {(m.folders || []).join(", ")} · {(m.labels || []).join(", ")}{m.oversized ? " · Oversized stub" : ""}</span>
     </li>)}</ul>
     {selected && <section aria-label="Mock source actions">
       <h2>Source · {selected.account} / {selected.thread_id}</h2>
       <label>New label <input value={newLabel} onChange={e => setNewLabel(e.target.value)} /></label>
       {data.messages.filter(m => m.id === selected.id).map(m => <article key={m.id}>
         <h3>{m.subject}</h3><p>{m.from} · Mock / {m.account} · {m.native_id}</p>
-        <p>{m.folders.join(", ")} · {m.labels.join(", ")}</p>
+        <p>{(m.folders || []).join(", ")} · {(m.labels || []).join(", ")}</p>
         <button disabled={busy} onClick={() => mutate(m, "read", !m.read)}>{m.read ? "Mark unread" : "Mark read"}</button>
         <button disabled={busy} onClick={() => mutate(m, "star", !m.starred)}>{m.starred ? "Unstar" : "Star"}</button>
         <button disabled={busy || !newLabel.trim()} onClick={() => mutate(m, "label", true, newLabel)}>Add label</button>
-        {m.labels.map(name => <button key={name} disabled={busy} onClick={() => mutate(m, "label", false, name)}>Remove {name}</button>)}
+        {(m.labels || []).map(name => <button key={name} disabled={busy} onClick={() => mutate(m, "label", false, name)}>Remove {name}</button>)}
         <button disabled={busy} onClick={() => mutate(m, "archive")}>Archive</button>
         <button disabled={busy} onClick={() => { if (window.confirm("Move this synthetic message to Mock Trash?")) mutate(m, "trash"); }}>Trash</button>
         <button onClick={() => navigate(`/messages/${m.id}?return=${encodeURIComponent("/mock")}`)}>Open thread and attachments</button>

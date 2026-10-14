@@ -45,6 +45,11 @@ func TestMockIngestionMutationRestartAndTenantIsolation(t *testing.T) {
 	if err != nil || len(all) != 6 {
 		t.Fatalf("canonical ingestion: %d %v", len(all), err)
 	}
+	for _, message := range all {
+		if message.Folders == nil || message.Labels == nil || message.Attachments == nil {
+			t.Fatalf("mock API collection fields must be arrays, got %+v", message)
+		}
+	}
 	for _, a := range provider.MockAccounts(owner.ID) {
 		if err := hub.Sync(ctx, a); err != nil {
 			t.Fatal(err)
