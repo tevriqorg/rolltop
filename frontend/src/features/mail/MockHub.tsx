@@ -40,7 +40,7 @@ export function MockHub({ csrf, datePrefs, swipePreferences, navigate, addToast 
       .then(value => {
         if (!active) return;
         setData(value);
-        setSelected(current => current && value.messages.some(message => message.id === current.id) ? current : (value.messages[0] || null));
+        setSelected(current => (current ? value.messages.find(message => message.id === current.id) : undefined) || value.messages[0] || null);
       })
       .catch(e => { if (active) setError(String(e)); });
     return () => { active = false; };
