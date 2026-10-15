@@ -9,6 +9,8 @@ import {
 } from "@assistant-ui/react";
 import { AssistantChatTransport, useChatRuntime } from "@assistant-ui/ai-sdk";
 import { lastAssistantMessageIsCompleteWithApprovalResponses } from "ai";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type ModelConfig = { configured: boolean; model?: string };
 
@@ -31,8 +33,19 @@ export function toolActivityLabel(name: string, args: unknown, result: unknown, 
   if (Array.isArray(result)) return `${label}完成 · ${result.length} 条结果`;
   return `${label}完成`;
 }
-function TextPart({ text }: TextMessagePartProps) {
+function UserTextPart({ text }: TextMessagePartProps) {
   return <p className="mail-ai-text">{text}</p>;
+}
+
+function AssistantMarkdownPart({ text }: TextMessagePartProps) {
+  return <div className="mail-ai-markdown">
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>
+      }}
+    >{text}</ReactMarkdown>
+  </div>;
 }
 
 function ToolCard(props: ToolCallMessagePartProps) {
@@ -57,13 +70,13 @@ function ToolCard(props: ToolCallMessagePartProps) {
 
 function UserMessage() {
   return <MessagePrimitive.Root className="mail-ai-message user">
-    <MessagePrimitive.Parts components={{ Text: TextPart }} />
+    <MessagePrimitive.Parts components={{ Text: UserTextPart }} />
   </MessagePrimitive.Root>;
 }
 
 function AssistantMessage() {
   return <MessagePrimitive.Root className="mail-ai-message assistant">
-    <MessagePrimitive.Parts components={{ Text: TextPart, Reasoning: () => <div className="mail-ai-thinking">正在分析…</div>, tools: { Fallback: ToolCard } }} />
+    <MessagePrimitive.Parts components={{ Text: AssistantMarkdownPart, Reasoning: () => <div className="mail-ai-thinking">正在分析…</div>, tools: { Fallback: ToolCard } }} />
   </MessagePrimitive.Root>;
 }
 function AssistantThread({ model }: { model: string }) {

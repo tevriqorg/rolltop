@@ -1111,3 +1111,22 @@
 .mail-ai-composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; border: 1px solid var(--border-strong); border-radius: 12px; padding: 8px; background: var(--surface); }
 .mail-ai-composer textarea { min-height: 64px; max-height: 160px; border: 0; outline: 0; background: transparent; resize: vertical; }
 .mail-ai-composer button { align-self: end; }
+
+/* Render assistant output as Markdown while keeping user messages plain text. */
+.mail-ai-markdown { line-height: 1.5; overflow-wrap: anywhere; }
+.mail-ai-markdown > :first-child { margin-top: 0; }
+.mail-ai-markdown > :last-child { margin-bottom: 0; }
+.mail-ai-markdown p { margin: 0 0 9px; }
+.mail-ai-markdown h1, .mail-ai-markdown h2, .mail-ai-markdown h3 { margin: 14px 0 7px; font-family: var(--font-ui); line-height: 1.25; }
+.mail-ai-markdown h1 { font-size: 1.12rem; }
+.mail-ai-markdown h2 { font-size: 1.02rem; }
+.mail-ai-markdown h3 { font-size: .94rem; }
+.mail-ai-markdown ul, .mail-ai-markdown ol { margin: 7px 0 10px; padding-left: 22px; }
+.mail-ai-markdown li + li { margin-top: 3px; }
+.mail-ai-markdown blockquote { margin: 9px 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--surface-subtle); color: var(--muted); }
+.mail-ai-markdown code { padding: 1px 4px; border-radius: 4px; background: var(--surface-subtle); font-family: var(--font-mono); font-size: .9em; }
+.mail-ai-markdown pre { max-width: 100%; overflow: auto; margin: 9px 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-ink); color: #f4f1eb; }
+.mail-ai-markdown pre code { padding: 0; background: transparent; color: inherit; }
+.mail-ai-markdown table { display: block; max-width: 100%; overflow-x: auto; margin: 9px 0 12px; font-size: .82rem; }
+.mail-ai-markdown th, .mail-ai-markdown td { padding: 6px 8px; white-space: normal; }
+.mail-ai-markdown a { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
