@@ -1098,6 +1098,11 @@
 .mail-ai-message.user { align-self: flex-end; border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .mail-ai-message.assistant { align-self: stretch; max-width: 100%; background: var(--surface); }
 .mail-ai-text { margin: 0; white-space: pre-wrap; line-height: 1.48; overflow-wrap: anywhere; }
+.mail-ai-message-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.mail-ai-action-bar, .mail-ai-branch-picker { display: flex; align-items: center; gap: 4px; }
+.mail-ai-action-bar button, .mail-ai-branch-picker button { min-height: 28px; padding: 3px 7px; border: 0; background: transparent; color: var(--muted); font-size: .72rem; }
+.mail-ai-action-bar button:hover:not(:disabled), .mail-ai-branch-picker button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.mail-ai-branch-picker span { color: var(--muted); font-size: .72rem; }
 .mail-ai-thinking { color: var(--muted); font-size: .78rem; padding: 4px 0; }
 
 .mail-ai-tool-card { margin: 7px 0; border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; background: var(--surface-subtle); }
@@ -1110,6 +1115,7 @@
 .mail-ai-assistant-footer { margin-top: auto; position: sticky; bottom: -12px; padding: 10px 0 0; background: linear-gradient(to bottom, transparent, var(--surface) 20%); }
 .mail-ai-composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; border: 1px solid var(--border-strong); border-radius: 12px; padding: 8px; background: var(--surface); }
 .mail-ai-composer textarea { min-height: 64px; max-height: 160px; border: 0; outline: 0; background: transparent; resize: vertical; }
+.mail-ai-composer-actions { display: flex; gap: 6px; align-items: end; }
 .mail-ai-composer button { align-self: end; }
 
 /* Render assistant output as Markdown while keeping user messages plain text. */

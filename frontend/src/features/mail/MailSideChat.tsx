@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ActionBarPrimitive,
   AssistantRuntimeProvider,
+  BranchPickerPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
@@ -91,7 +93,7 @@ function AssistantThread({ model }: { model: string }) {
       <ThreadPrimitive.ViewportFooter className="mail-ai-assistant-footer">
         <ComposerPrimitive.Root className="mail-ai-composer">
           <ComposerPrimitive.Input placeholder="问这封邮件，或搜索全部邮箱…" rows={3} />
-          <ComposerPrimitive.Send>发送</ComposerPrimitive.Send>
+          <div className="mail-ai-composer-actions"><ComposerPrimitive.Cancel>停止</ComposerPrimitive.Cancel><ComposerPrimitive.Send>发送</ComposerPrimitive.Send></div>
         </ComposerPrimitive.Root>
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Viewport>
