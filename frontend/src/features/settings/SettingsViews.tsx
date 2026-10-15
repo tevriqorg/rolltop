@@ -10,6 +10,7 @@ import { Icon } from "../../components/Icon";
 import { Field, Stat } from "../../components/common";
 import { emptyAccountForm, accountToForm, applyDiscoveredMailSettings } from "../../lib/accountForm";
 import { MailServerDiscovery } from "./MailServerDiscovery";
+import { GoogleConnectorCard } from "./GoogleConnectorCard";
 import { messageFromError } from "../../lib/errors";
 import { displayDateTime, displayTime, formatBytes } from "../../lib/format";
 import { folderParentNames, folderTree, trashMailboxForAccount, type FolderNode } from "../../lib/folders";
@@ -2553,6 +2554,10 @@ export function SettingsView({
     page = (
       <SettingsPage title="Mail" description="Incoming servers, outgoing delivery, folders, and identities." navigate={navigate}>
         {noticeNode}
+        <section className="settings-index-group">
+          <div className="settings-index-heading"><div><h2>Account connectors</h2><p>OAuth-backed provider identities and token lifecycle.</p></div></div>
+          <GoogleConnectorCard csrf={csrf} addToast={addToast} />
+        </section>
         <section className="settings-index-group">
           <div className="settings-index-heading">
             <div><h2>Incoming mail</h2><p>IMAP connections, folder sync, roles, and local indexing.</p></div>

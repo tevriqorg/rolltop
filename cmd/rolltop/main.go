@@ -24,6 +24,8 @@ import (
 	"syscall"
 	"time"
 
+	"rolltop/backend/accountconnector"
+	googleconnector "rolltop/backend/accountconnector/google"
 	"rolltop/backend/blob"
 	"rolltop/backend/buildinfo"
 	"rolltop/backend/config"
@@ -518,6 +520,17 @@ func startApp(ctx context.Context, cfg config.Config, startup *startupState) (*a
 		MaxMessageBytes: cfg.MaxMessageBytes,
 	}
 	syncRunner := syncer.NewRunnerWithContext(ctx, syncSvc)
+	var googleConnector accountconnector.Connector
+	googleClientID := strings.TrimSpace(os.Getenv("ROLLTOP_GOOGLE_CLIENT_ID"))
+	googleClientSecret := strings.TrimSpace(os.Getenv("ROLLTOP_GOOGLE_CLIENT_SECRET"))
+	googleRedirectURL := strings.TrimSpace(os.Getenv("ROLLTOP_GOOGLE_REDIRECT_URL"))
+	if googleClientID != "" || googleClientSecret != "" || googleRedirectURL != "" {
+		configured, err := googleconnector.New(googleconnector.Config{ClientID: googleClientID, ClientSecret: googleClientSecret, RedirectURL: googleRedirectURL})
+		if err != nil {
+			return nil, fmt.Errorf("google connector: %w", err)
+		}
+		googleConnector = configured
+	}
 	webServer, err := web.New(web.Options{
 		Store:             db,
 		Blobs:             blobStore,
@@ -536,6 +549,7 @@ func startApp(ctx context.Context, cfg config.Config, startup *startupState) (*a
 		TrustedProxies:    cfg.TrustedProxies,
 		MailAIURL:         cfg.MailAIURL,
 		MailAISharedToken: cfg.MailAISharedToken,
+		GoogleConnector:   googleConnector,
 	})
 	if err != nil {
 		return nil, err
