@@ -41,6 +41,10 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 		writeJSON(w, map[string]bool{"configured": s.mailAIURL != "" && s.mailAISharedToken != ""})
 		return
 	}
+	if path == "mail-ai/thread" {
+		s.apiMailAIThread(w, r, cu)
+		return
+	}
 	if path != "mail-ai/chat" && path != "mail-ai/confirm" {
 		http.NotFound(w, r)
 		return
@@ -91,6 +95,91 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 	s.proxyMailAI(w, r, "/confirm", mailai.ConfirmRequest{UserID: cu.User.ID, ActionToken: body.ActionToken}, false)
 }
 
+type mailAIThreadRequest struct {
+	ThreadID string            `json:"thread_id"`
+	Messages []json.RawMessage `json:"messages"`
+}
+
+func (s *Server) apiMailAIThread(w http.ResponseWriter, r *http.Request, cu currentUser) {
+	switch r.Method {
+	case http.MethodGet:
+		thread, err := s.store.CurrentMailAIThreadForUser(r.Context(), cu.User.ID)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		writeJSON(w, thread)
+	case http.MethodPut:
+		if !s.verifyCSRF(w, r) {
+			return
+		}
+		var body mailAIThreadRequest
+		if !decodeMailAIJSON(w, r, &body, 2<<20) {
+			return
+		}
+		messages, err := mailAIMessageSnapshots(body.Messages)
+		if err != nil || strings.TrimSpace(body.ThreadID) == "" {
+			writeAPIError(w, http.StatusBadRequest, "invalid mail-ai thread snapshot")
+			return
+		}
+		if err := s.store.SaveMailAIThreadMessagesForUser(r.Context(), cu.User.ID, body.ThreadID, messages); err != nil {
+			if store.IsNotFound(err) {
+				writeAPIError(w, http.StatusNotFound, "mail-ai thread not found")
+				return
+			}
+			s.serverError(w, r, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func mailAIMessageSnapshots(rawMessages []json.RawMessage) ([]store.MailAIMessageSnapshot, error) {
+	messages := make([]store.MailAIMessageSnapshot, 0, len(rawMessages))
+	for _, raw := range rawMessages {
+		var object map[string]json.RawMessage
+		if !json.Valid(raw) || json.Unmarshal(raw, &object) != nil {
+			return nil, errors.New("invalid message")
+		}
+		var id, role string
+		if json.Unmarshal(object["id"], &id) != nil || json.Unmarshal(object["role"], &role) != nil || strings.TrimSpace(id) == "" || strings.TrimSpace(role) == "" {
+			return nil, errors.New("message id and role are required")
+		}
+		if rawParts := object["parts"]; len(rawParts) > 0 {
+			var parts []json.RawMessage
+			if json.Unmarshal(rawParts, &parts) != nil {
+				return nil, errors.New("invalid message parts")
+			}
+			visible := make([]json.RawMessage, 0, len(parts))
+			for _, part := range parts {
+				var header struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(part, &header) != nil {
+					return nil, errors.New("invalid message part")
+				}
+				if header.Type == "reasoning" || strings.HasPrefix(header.Type, "reasoning-") {
+					continue
+				}
+				visible = append(visible, part)
+			}
+			filtered, err := json.Marshal(visible)
+			if err != nil {
+				return nil, err
+			}
+			object["parts"] = filtered
+		}
+		payload, err := json.Marshal(object)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, store.MailAIMessageSnapshot{ID: strings.TrimSpace(id), Role: strings.TrimSpace(role), Payload: payload})
+	}
+	return messages, nil
+}
+
 func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 	cu, ok := s.requireAPIAuth(w, r)
 	if !ok {
@@ -123,6 +212,29 @@ func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if !json.Valid(body["messages"]) {
 		writeAPIError(w, http.StatusBadRequest, "messages are required")
+		return
+	}
+	var threadID string
+	if raw := body["thread_id"]; len(raw) == 0 || json.Unmarshal(raw, &threadID) != nil || strings.TrimSpace(threadID) == "" {
+		writeAPIError(w, http.StatusBadRequest, "mail-ai thread id is required")
+		return
+	}
+	var rawMessages []json.RawMessage
+	if json.Unmarshal(body["messages"], &rawMessages) != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid messages")
+		return
+	}
+	messages, err := mailAIMessageSnapshots(rawMessages)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid messages")
+		return
+	}
+	if err := s.store.SaveMailAIThreadMessagesForUser(r.Context(), cu.User.ID, threadID, messages); err != nil {
+		if store.IsNotFound(err) {
+			writeAPIError(w, http.StatusNotFound, "mail-ai thread not found")
+			return
+		}
+		s.serverError(w, r, err)
 		return
 	}
 	contextValue := map[string]any{"mode": "mailbox"}

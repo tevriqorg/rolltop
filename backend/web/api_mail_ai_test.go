@@ -155,3 +155,130 @@ func TestMailAIToolsAreServerAuthenticatedTenantScopedAndConfirmMutations(t *tes
 		t.Fatalf("confirmed label count=%d", len(got))
 	}
 }
+
+func TestMailAIThreadEndpointPersistsVisibleMessagesAndRejectsCrossTenantWrite(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner, err := st.CreateUser(ctx, "thread-owner@example.invalid", "Owner", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateUser(ctx, "thread-other@example.invalid", "Other", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st}
+
+	getThread := func(user store.User) map[string]json.RawMessage {
+		r := httptest.NewRequest(http.MethodGet, "/api/mail-ai/thread", nil)
+		r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: user}))
+		w := httptest.NewRecorder()
+		s.handleAPI(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET thread=%d %s", w.Code, w.Body.String())
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	ownerThread := getThread(owner)
+	var threadID string
+	if err := json.Unmarshal(ownerThread["thread_id"], &threadID); err != nil || threadID == "" {
+		t.Fatalf("thread id=%q err=%v", threadID, err)
+	}
+	putBody := `{"thread_id":"` + threadID + `","messages":[` +
+		`{"id":"u1","role":"user","parts":[{"type":"text","text":"hello"}]},` +
+		`{"id":"a1","role":"assistant","parts":[{"type":"reasoning","text":"private chain"},{"type":"text","text":"visible answer"},{"type":"tool-search_mail","toolCallId":"t1","state":"output-available","input":{"q":"x"},"output":[1]}]}` +
+		`]}`
+	put := httptest.NewRequest(http.MethodPut, "/api/mail-ai/thread", strings.NewReader(putBody))
+	put = put.WithContext(context.WithValue(put.Context(), userContextKey, currentUser{User: owner}))
+	put.AddCookie(&http.Cookie{Name: csrfCookie, Value: "thread-csrf"})
+	put.Header.Set("X-CSRF-Token", s.csrfForBase("thread-csrf"))
+	pw := httptest.NewRecorder()
+	s.handleAPI(pw, put)
+	if pw.Code != http.StatusOK {
+		t.Fatalf("PUT thread=%d %s", pw.Code, pw.Body.String())
+	}
+
+	restored := getThread(owner)
+	var messages []json.RawMessage
+	if err := json.Unmarshal(restored["messages"], &messages); err != nil || len(messages) != 2 {
+		t.Fatalf("restored messages=%d err=%v body=%s", len(messages), err, restored["messages"])
+	}
+	if strings.Contains(string(messages[1]), "private chain") || strings.Contains(string(messages[1]), `"type":"reasoning"`) {
+		t.Fatalf("private reasoning persisted: %s", messages[1])
+	}
+	if !strings.Contains(string(messages[1]), "visible answer") || !strings.Contains(string(messages[1]), "tool-search_mail") {
+		t.Fatalf("visible/tool result missing: %s", messages[1])
+	}
+
+	cross := httptest.NewRequest(http.MethodPut, "/api/mail-ai/thread", strings.NewReader(putBody))
+	cross = cross.WithContext(context.WithValue(cross.Context(), userContextKey, currentUser{User: other}))
+	cross.AddCookie(&http.Cookie{Name: csrfCookie, Value: "thread-csrf"})
+	cross.Header.Set("X-CSRF-Token", s.csrfForBase("thread-csrf"))
+	cw := httptest.NewRecorder()
+	s.handleAPI(cw, cross)
+	if cw.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant PUT=%d %s", cw.Code, cw.Body.String())
+	}
+}
+
+func TestMailAIMessageSnapshotsStripReasoningParts(t *testing.T) {
+	raw := []json.RawMessage{json.RawMessage(`{"id":"a1","role":"assistant","parts":[{"type":"reasoning","text":"secret"},{"type":"reasoning-start","id":"r1"},{"type":"text","text":"public"}]}`)}
+	messages, err := mailAIMessageSnapshots(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || strings.Contains(string(messages[0].Payload), "secret") || strings.Contains(string(messages[0].Payload), "reasoning-start") || !strings.Contains(string(messages[0].Payload), "public") {
+		t.Fatalf("sanitized message=%s", messages[0].Payload)
+	}
+}
+
+func TestMailAIAgentPersistsRequestSnapshotBeforeProxy(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner, err := st.CreateUser(ctx, "agent-persist@example.invalid", "Owner", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, err := st.CurrentMailAIThreadForUser(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent" {
+			t.Fatalf("sidecar path=%q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: ok\n\n"))
+	}))
+	defer sidecar.Close()
+	s := &Server{store: st, mailAIURL: sidecar.URL, mailAISharedToken: "persist-secret", mailAIHTTPClient: sidecar.Client()}
+	body := `{"id":"sdk-ephemeral","thread_id":"` + thread.ID + `","messages":[{"id":"u1","role":"user","parts":[{"type":"text","text":"persist me"}]}]}`
+	r := httptest.NewRequest(http.MethodPost, "/api/mail-ai/agent", strings.NewReader(body))
+	r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: owner}))
+	r.AddCookie(&http.Cookie{Name: csrfCookie, Value: "agent-csrf"})
+	r.Header.Set("X-CSRF-Token", s.csrfForBase("agent-csrf"))
+	w := httptest.NewRecorder()
+	s.handleAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("agent=%d %s", w.Code, w.Body.String())
+	}
+	restored, err := st.CurrentMailAIThreadForUser(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Messages) != 1 || !strings.Contains(string(restored.Messages[0]), "persist me") {
+		t.Fatalf("agent request snapshot not persisted: %s", restored.Messages)
+	}
+}
