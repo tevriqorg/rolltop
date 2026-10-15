@@ -34,17 +34,21 @@ type mockSource interface {
 
 func Accounts(userID int64) []provider.Account {
 	if strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")) != "" {
-		return []provider.Account{{UserID: userID, ID: "personal", Provider: provider.Mock}}
+		return []provider.Account{
+			{UserID: userID, ID: "personal", Provider: provider.Mock},
+			{UserID: userID, ID: "work", Provider: provider.Mock},
+			{UserID: userID, ID: "travel", Provider: provider.Mock},
+		}
 	}
 	return provider.MockAccounts(userID)
 }
 
 func (s Service) Source(ctx context.Context, a provider.Account) (mockSource, error) {
 	if base := strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")); base != "" {
-		if a.ID != "personal" {
-			return nil, errors.New("remote mock source exposes only personal account")
+		if a.ID != "personal" && a.ID != "work" && a.ID != "travel" {
+			return nil, errors.New("unknown remote mock account")
 		}
-		return provider.RemoteMockMailbox{Account: a, BaseURL: base}, nil
+		return provider.RemoteMockMailbox{Account: a, BaseURL: strings.TrimRight(base, "/") + "/accounts/" + a.ID}, nil
 	}
 	p := provider.MockMailbox{Account: a}
 	journal, err := s.Store.ProviderJournal(ctx, a.UserID, a.ID)
@@ -88,7 +92,7 @@ func (s Service) Mutate(ctx context.Context, a provider.Account, change provider
 	return s.Sync(ctx, a)
 }
 func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
-	if a.Provider != provider.Mock || (a.ID != "personal" && a.ID != "work") || a.UserID <= 0 {
+	if a.Provider != provider.Mock || (a.ID != "personal" && a.ID != "work" && a.ID != "travel") || a.UserID <= 0 {
 		return errors.New("unknown mock account")
 	}
 	if s.Search == nil || s.Blobs == nil {
@@ -106,7 +110,7 @@ func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
 	if err != nil {
 		return err
 	}
-	progress := store.SyncProgress{CurrentMailbox: "Mock " + a.ID}
+	progress := store.SyncProgress{CurrentMailbox: "INBOX"}
 	defer func() {
 		status := "completed"
 		message := ""
@@ -168,7 +172,7 @@ func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
 			return err
 		}
 		ingest := syncer.Service{Store: s.Store, Blobs: s.Blobs, Search: s.Search}
-		msg, err := ingest.StoreSnapshotMessage(ctx, a.UserID, store.MailAccount{ID: source.AccountID, UserID: a.UserID}, store.Mailbox{ID: source.MailboxID, UserID: a.UserID, AccountID: source.AccountID, Name: "Mock mirror", IncludeInSearch: true}, syncer.FetchedMessage{Mailbox: "Mock mirror", UID: slot, Raw: m.Raw, Size: m.Size, Flags: flags, Oversized: m.Oversized})
+		msg, err := ingest.StoreSnapshotMessage(ctx, a.UserID, store.MailAccount{ID: source.AccountID, UserID: a.UserID}, store.Mailbox{ID: source.MailboxID, UserID: a.UserID, AccountID: source.AccountID, Name: "INBOX", Role: "inbox", IncludeInSearch: true}, syncer.FetchedMessage{Mailbox: "INBOX", UID: slot, Raw: m.Raw, Size: m.Size, Flags: flags, Oversized: m.Oversized})
 		if err != nil {
 			return err
 		}

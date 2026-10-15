@@ -24,6 +24,10 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 		s.apiMailAITools(w, r)
 		return
 	}
+	if path == "mail-ai/agent" {
+		s.apiMailAIAgent(w, r)
+		return
+	}
 	cu, ok := s.requireAPIAuth(w, r)
 	if !ok {
 		return
@@ -85,6 +89,95 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 		return
 	}
 	s.proxyMailAI(w, r, "/confirm", mailai.ConfirmRequest{UserID: cu.User.ID, ActionToken: body.ActionToken}, false)
+}
+
+func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
+	cu, ok := s.requireAPIAuth(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !s.verifyCSRF(w, r) {
+		return
+	}
+	if s.mailAIURL == "" || s.mailAISharedToken == "" {
+		writeAPIError(w, http.StatusServiceUnavailable, "mail-ai is not configured")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+	defer r.Body.Close()
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid agent request")
+		return
+	}
+	var messageID int64
+	if err := json.Unmarshal(body["message_id"], &messageID); err != nil || messageID <= 0 || !json.Valid(body["messages"]) {
+		writeAPIError(w, http.StatusBadRequest, "message_id and messages are required")
+		return
+	}
+	context, err := s.mockMailAIContext(r.Context(), cu.User.ID, messageID)
+	if store.IsNotFound(err) {
+		writeAPIError(w, http.StatusNotFound, "message not found")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	userRaw, _ := json.Marshal(cu.User.ID)
+	contextRaw, _ := json.Marshal(context)
+	body["user_id"] = userRaw
+	body["context"] = contextRaw
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.mailAIURL+"/agent", bytes.NewReader(encoded))
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.mailAISharedToken)
+	res, err := s.mailAIHTTPClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "mail-ai is unavailable")
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		writeAPIError(w, http.StatusBadGateway, strings.TrimSpace(string(message)))
+		return
+	}
+	for _, key := range []string{"Content-Type", "Cache-Control", "X-Vercel-AI-UI-Message-Stream"} {
+		if value := res.Header.Get(key); value != "" {
+			w.Header().Set(key, value)
+		}
+	}
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 8192)
+	for {
+		n, readErr := res.Body.Read(buf)
+		if n > 0 {
+			_, _ = w.Write(buf[:n])
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				logHandlerError(r, fmt.Errorf("mail-ai agent stream: %w", readErr))
+			}
+			return
+		}
+	}
 }
 
 func decodeMailAIJSON(w http.ResponseWriter, r *http.Request, out any, max int64) bool {

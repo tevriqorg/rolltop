@@ -21,18 +21,24 @@
     "build:carddav-sync-css": "mkdir -p plugins/carddav_sync/frontend_dist && sass plugins/carddav_sync/frontend/styles.css plugins/carddav_sync/frontend_dist/styles.css --style=compressed"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.69",
+    "@ai-sdk/react": "^4.0.145",
+    "@assistant-ui/ai-sdk": "^0.0.12",
+    "@assistant-ui/react": "^0.15.28",
     "@embedpdf/pdfium": "^2.14.3",
     "@embedpdf/react-pdf-viewer": "^2.14.3",
     "@fontsource/fraunces": "^5.2.9",
     "@phosphor-icons/react": "^2.1.10",
     "@vitejs/plugin-react": "^4.3.4",
+    "ai": "^7.0.141",
     "dompurify": "^3.4.7",
     "openpgp": "^6.3.0",
     "punycode": "2.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.3",
-    "vite": "^6.0.11"
+    "vite": "^6.0.11",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/punycode": "2.1.4",
