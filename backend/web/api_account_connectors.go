@@ -2,11 +2,14 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"rolltop/backend/accountconnector"
 	"rolltop/backend/auth"
+	"rolltop/backend/provider"
+	gmailprovider "rolltop/backend/provider/gmail"
 )
 
 type googleOAuthPending struct {
@@ -35,6 +38,8 @@ func (s *Server) apiGoogleConnector(w http.ResponseWriter, r *http.Request, path
 		s.googleConnectorStart(w, r, cu.User.ID)
 	case "account-connectors/google/callback":
 		s.googleConnectorCallback(w, r, cu.User.ID)
+	case "account-connectors/google/census":
+		s.googleConnectorCensus(w, r, cu.User.ID)
 	default:
 		http.NotFound(w, r)
 	}
@@ -142,4 +147,45 @@ func (s *Server) googleConnectorCallback(w http.ResponseWriter, r *http.Request,
 	// Connecting an account never starts a Gmail backfill. Gate G1 requires a
 	// real Storage Census and explicit approval before any message download.
 	http.Redirect(w, r, "/settings/account/mail?google=connected", http.StatusSeeOther)
+}
+
+func (s *Server) googleConnectorCensus(w http.ResponseWriter, r *http.Request, userID int64) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !s.verifyCSRF(w, r) {
+		return
+	}
+	if s.googleConnector == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "Google connector is not configured.")
+		return
+	}
+	connections, err := s.store.ListAccountConnections(r.Context(), userID, s.googleConnector.ID())
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	if len(connections) != 1 {
+		writeAPIError(w, http.StatusConflict, "Gate G1 requires exactly one connected Google account.")
+		return
+	}
+	connection := connections[0]
+	tokens, err := s.accountConnectors.RefreshAccess(r.Context(), userID, s.googleConnector, connection.ExternalSubject)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	account := provider.Account{UserID: userID, ID: "google-" + strconv.FormatInt(connection.ID, 10), Provider: provider.Gmail}
+	client := gmailprovider.Client{BaseURL: s.gmailAPIBaseURL, AccessToken: tokens.AccessToken}
+	census, err := client.Census(r.Context(), account)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"census":          census,
+		"account_email":   connection.Email,
+		"backfill_locked": true,
+	})
 }

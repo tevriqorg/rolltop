@@ -36,7 +36,7 @@ func TestScopesAreMinimalAndDeterministic(t *testing.T) {
 		{"identity", []accountconnector.Capability{accountconnector.Identity}, []string{"openid", "email"}},
 		{"read", []accountconnector.Capability{accountconnector.MailRead}, []string{"openid", "email", gmailReadonlyScope}},
 		{"read modify", []accountconnector.Capability{accountconnector.MailRead, accountconnector.MailModify}, []string{"openid", "email", gmailModifyScope}},
-		{"modify send", []accountconnector.Capability{accountconnector.MailSend, accountconnector.MailModify}, []string{"openid", "email", gmailModifyScope}},
+		{"modify send", []accountconnector.Capability{accountconnector.MailSend, accountconnector.MailModify}, []string{"openid", "email", gmailModifyScope, gmailSendScope}},
 		{"send only", []accountconnector.Capability{accountconnector.MailSend}, []string{"openid", "email", gmailSendScope}},
 	}
 	for _, tc := range tests {
@@ -91,7 +91,7 @@ func TestAuthorizationURLUsesPKCEOfflineAndNeverSecret(t *testing.T) {
 	if strings.Contains(raw, "client-secret") || q.Get("client_secret") != "" {
 		t.Fatal("authorization URL exposed client secret")
 	}
-	if !strings.Contains(q.Get("scope"), gmailModifyScope) || strings.Contains(q.Get("scope"), gmailSendScope) {
+	if !strings.Contains(q.Get("scope"), gmailModifyScope) || !strings.Contains(q.Get("scope"), gmailSendScope) {
 		t.Fatalf("scope=%q", q.Get("scope"))
 	}
 }

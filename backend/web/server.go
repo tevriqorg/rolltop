@@ -155,6 +155,7 @@ type Server struct {
 	accountConnectors  accountconnector.Service
 	googleOAuthMu      sync.Mutex
 	googleOAuthPending map[string]googleOAuthPending
+	gmailAPIBaseURL    string
 }
 
 type contextKey string

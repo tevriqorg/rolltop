@@ -86,7 +86,6 @@ func (c *Connector) Scopes(capabilities []accountconnector.Capability) ([]string
 	}
 	if modify {
 		delete(extra, gmailReadonlyScope)
-		delete(extra, gmailSendScope)
 		extra[gmailModifyScope] = true
 	}
 	keys := make([]string, 0, len(extra))

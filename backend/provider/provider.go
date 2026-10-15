@@ -11,8 +11,9 @@ import (
 type Kind string
 
 const (
-	Mock Kind = "mock"
-	IMAP Kind = "imap"
+	Mock  Kind = "mock"
+	IMAP  Kind = "imap"
+	Gmail Kind = "gmail"
 )
 
 // Account identifies a source within a tenant; IDs are local, not email addresses.
