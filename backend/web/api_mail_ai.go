@@ -46,6 +46,10 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 		s.apiMailAIThreads(w, r, cu)
 		return
 	}
+	if path == "mail-ai/trace" {
+		s.apiMailAITrace(w, r, cu)
+		return
+	}
 	if path == "mail-ai/thread" {
 		s.apiMailAIThread(w, r, cu)
 		return
@@ -208,6 +212,93 @@ func (s *Server) apiMailAIThread(w http.ResponseWriter, r *http.Request, cu curr
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+type mailAITraceEvent struct {
+	ID         string          `json:"id"`
+	MessageID  string          `json:"message_id"`
+	ToolCallID string          `json:"tool_call_id"`
+	ToolName   string          `json:"tool_name"`
+	State      string          `json:"state"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	ErrorText  string          `json:"error_text,omitempty"`
+}
+
+func (s *Server) apiMailAITrace(w http.ResponseWriter, r *http.Request, cu currentUser) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	threadID := strings.TrimSpace(r.URL.Query().Get("thread_id"))
+	if threadID == "" {
+		writeAPIError(w, http.StatusBadRequest, "mail-ai thread id is required")
+		return
+	}
+	thread, err := s.store.MailAIThreadForUser(r.Context(), cu.User.ID, threadID)
+	if store.IsNotFound(err) {
+		writeAPIError(w, http.StatusNotFound, "mail-ai thread not found")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	events, err := mailAITraceEvents(thread.Messages)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"thread_id": thread.ID, "events": events})
+}
+
+func mailAITraceEvents(messages []json.RawMessage) ([]mailAITraceEvent, error) {
+	events := make([]mailAITraceEvent, 0)
+	for _, raw := range messages {
+		var message struct {
+			ID    string            `json:"id"`
+			Role  string            `json:"role"`
+			Parts []json.RawMessage `json:"parts"`
+		}
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return nil, err
+		}
+		if message.Role != "assistant" {
+			continue
+		}
+		for index, rawPart := range message.Parts {
+			var part struct {
+				Type       string          `json:"type"`
+				ToolName   string          `json:"toolName"`
+				ToolCallID string          `json:"toolCallId"`
+				State      string          `json:"state"`
+				Input      json.RawMessage `json:"input"`
+				Output     json.RawMessage `json:"output"`
+				ErrorText  string          `json:"errorText"`
+			}
+			if err := json.Unmarshal(rawPart, &part); err != nil {
+				return nil, err
+			}
+			toolName := strings.TrimSpace(part.ToolName)
+			if strings.HasPrefix(part.Type, "tool-") {
+				toolName = strings.TrimPrefix(part.Type, "tool-")
+			} else if part.Type != "dynamic-tool" {
+				continue
+			}
+			if toolName == "" {
+				continue
+			}
+			id := strings.TrimSpace(part.ToolCallID)
+			if id == "" {
+				id = fmt.Sprintf("%s:%d", message.ID, index)
+			}
+			events = append(events, mailAITraceEvent{
+				ID: id, MessageID: message.ID, ToolCallID: part.ToolCallID, ToolName: toolName,
+				State: part.State, Input: part.Input, Output: part.Output, ErrorText: part.ErrorText,
+			})
+		}
+	}
+	return events, nil
 }
 
 func (s *Server) mailAIThreadScopeSpec(ctx context.Context, userID int64, scope string, messageID int64) (store.MailAIThreadScopeSpec, error) {

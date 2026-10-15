@@ -1107,6 +1107,13 @@
 .mail-ai-history-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .7rem; color: var(--muted); }
 .mail-ai-history-row strong { color: var(--accent-strong); }
 .mail-ai-history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
+.mail-ai-trace { max-height: min(44vh, 360px); overflow: auto; display: grid; gap: 7px; padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.mail-ai-trace-note { padding: 2px 4px 5px; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.mail-ai-trace-item { display: flex; gap: 8px; align-items: flex-start; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-ai-trace-index { flex: 0 0 auto; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--surface-subtle); color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
+.mail-ai-trace-item > div { min-width: 0; display: grid; gap: 3px; }
+.mail-ai-trace-item strong { font-size: .78rem; overflow-wrap: anywhere; }
+.mail-ai-trace-item > div > span { color: var(--muted); font-size: .72rem; line-height: 1.4; overflow-wrap: anywhere; }
 .mail-ai-error { color: var(--danger); border-bottom: 1px solid var(--border); padding: 8px 12px; }
 .mail-ai-assistant-viewport { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
 .mail-ai-empty { color: var(--muted); font-size: .82rem; line-height: 1.45; padding: 8px 4px; }

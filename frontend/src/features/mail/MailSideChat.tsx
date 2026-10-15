@@ -33,6 +33,17 @@ type ThreadSnapshot = {
 type ThreadSummary = Omit<ThreadSnapshot, "messages">;
 
 type ThreadListResponse = { threads: ThreadSummary[] };
+type TraceEvent = {
+  id: string;
+  message_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  state: string;
+  input?: unknown;
+  output?: unknown;
+  error_text?: string;
+};
+type TraceResponse = { thread_id: string; events: TraceEvent[] };
 
 const TOOL_LABELS: Record<string, string> = {
   list_mail: "浏览邮箱",
@@ -58,6 +69,22 @@ export function toolActivityLabel(name: string, args: unknown, result: unknown, 
   if (running) return `正在${label}`;
   if (Array.isArray(result)) return `${label}完成 · ${result.length} 条结果`;
   return `${label}完成`;
+}
+
+export function traceResultSummary(event: TraceEvent) {
+  if (event.error_text) return `失败：${event.error_text}`;
+  if (Array.isArray(event.output)) return `结果：${event.output.length} 条`;
+  if (event.output && typeof event.output === "object") {
+    const output = event.output as Record<string, unknown>;
+    if (typeof output.subject === "string" && output.subject.trim()) return `结果：${output.subject}`;
+    if (typeof output.ok === "boolean") return output.ok ? "结果：完成" : "结果：未完成";
+    return `结果：${Object.keys(output).slice(0, 4).join("、") || "已返回"}`;
+  }
+  if (typeof event.output === "string" && event.output.trim()) {
+    const text = event.output.trim();
+    return `结果：${text.length > 96 ? `${text.slice(0, 96)}…` : text}`;
+  }
+  return event.state === "output-available" ? "结果：完成" : "等待结果";
 }
 
 function UserTextPart({ text }: TextMessagePartProps) {
@@ -164,8 +191,10 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
   const [model, setModel] = useState("Agent");
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
   const [history, setHistory] = useState<ThreadSummary[]>([]);
+  const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [threadError, setThreadError] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -176,6 +205,16 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         return await response.json() as ThreadListResponse;
       })
       .then((value) => setHistory(Array.isArray(value.threads) ? value.threads : []))
+      .catch((error) => console.error(error));
+  }, []);
+
+  const loadTrace = useCallback((threadID: string) => {
+    void fetch(`/api/mail-ai/trace?thread_id=${encodeURIComponent(threadID)}`, { headers: { Accept: "application/json" }, cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Mail AI trace failed (${response.status})`);
+        return await response.json() as TraceResponse;
+      })
+      .then((value) => setTrace(Array.isArray(value.events) ? value.events : []))
       .catch((error) => console.error(error));
   }, []);
 
@@ -210,7 +249,8 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
 
   const restoreThread = async (threadID: string) => {
     try {
-      await loadThread(`/api/mail-ai/thread?thread_id=${encodeURIComponent(threadID)}`);
+      const restored = await loadThread(`/api/mail-ai/thread?thread_id=${encodeURIComponent(threadID)}`);
+      if (showTrace) loadTrace(restored.thread_id);
       setShowHistory(false);
       setShowNew(false);
     } catch (error) {
@@ -229,9 +269,11 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
       if (!response.ok) throw new Error(`Mail AI new conversation failed (${response.status})`);
       const value = await response.json() as ThreadSnapshot;
       setThread(value);
+      setTrace([]);
       setThreadError("");
       setShowNew(false);
       setShowHistory(false);
+      setShowTrace(false);
       loadHistory();
     } catch (error) {
       setThreadError(error instanceof Error ? error.message : "Mail AI new conversation unavailable");
@@ -252,8 +294,15 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         <span>{thread ? `${mailAIScopeLabel(thread.scope)} · ${thread.context?.subject || model}` : model}</span>
       </div>
       <div className="mail-ai-header-actions">
-        <button type="button" className="ghost" disabled={busy} onClick={() => { setShowNew((value) => !value); setShowHistory(false); }}>新建</button>
-        <button type="button" className="ghost" disabled={busy} onClick={() => { setShowHistory((value) => !value); setShowNew(false); loadHistory(); }}>历史</button>
+        <button type="button" className="ghost" disabled={busy} onClick={() => { setShowNew((value) => !value); setShowHistory(false); setShowTrace(false); }}>新建</button>
+        <button type="button" className="ghost" disabled={busy} onClick={() => { setShowHistory((value) => !value); setShowNew(false); setShowTrace(false); loadHistory(); }}>历史</button>
+        <button type="button" className="ghost" disabled={busy || !thread} onClick={() => {
+          const next = !showTrace;
+          setShowTrace(next);
+          setShowHistory(false);
+          setShowNew(false);
+          if (next && thread) loadTrace(thread.thread_id);
+        }}>过程</button>
       </div>
     </header>
     {showNew ? <section className="mail-ai-new-menu" aria-label="New Mail AI conversation">
@@ -271,10 +320,20 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         <span className="mail-ai-history-title">{threadTitle(item)}</span>
       </button>)}
     </section> : null}
+    {showTrace ? <section className="mail-ai-trace" aria-label="Mail AI work trace">
+      <div className="mail-ai-trace-note">仅显示可审计的工具步骤和结果，不包含模型私有推理。</div>
+      {trace.length === 0 ? <div className="mail-ai-empty">这个会话还没有工具步骤。</div> : trace.map((event, index) => <article className="mail-ai-trace-item" key={`${event.id}-${index}`}>
+        <span className="mail-ai-trace-index">{index + 1}</span>
+        <div>
+          <strong>{toolActivityLabel(event.tool_name, event.input, event.output, event.state !== "output-available" && !event.error_text)}</strong>
+          <span>{traceResultSummary(event)}</span>
+        </div>
+      </article>)}
+    </section> : null}
     {threadError ? <div className="mail-ai-empty mail-ai-error">{threadError}</div> : null}
     {!thread && !threadError ? <div className="mail-ai-empty">正在恢复 Mail AI 对话…</div> : null}
     {thread ? <div className="mail-ai-runtime-shell" key={thread.thread_id}>
-      <MailSideChatRuntime csrf={csrf} thread={thread} onPersisted={loadHistory} />
+      <MailSideChatRuntime csrf={csrf} thread={thread} onPersisted={() => { loadHistory(); if (showTrace) loadTrace(thread.thread_id); }} />
     </div> : null}
   </aside>;
 }

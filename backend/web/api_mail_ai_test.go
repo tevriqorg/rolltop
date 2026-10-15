@@ -218,6 +218,28 @@ func TestMailAIThreadEndpointPersistsVisibleMessagesAndRejectsCrossTenantWrite(t
 		t.Fatalf("visible/tool result missing: %s", messages[1])
 	}
 
+	trace := httptest.NewRequest(http.MethodGet, "/api/mail-ai/trace?thread_id="+threadID, nil)
+	trace = trace.WithContext(context.WithValue(trace.Context(), userContextKey, currentUser{User: owner}))
+	tw := httptest.NewRecorder()
+	s.handleAPI(tw, trace)
+	if tw.Code != http.StatusOK {
+		t.Fatalf("GET trace=%d %s", tw.Code, tw.Body.String())
+	}
+	if strings.Contains(tw.Body.String(), "private chain") || strings.Contains(tw.Body.String(), "reasoning") {
+		t.Fatalf("private reasoning leaked in trace: %s", tw.Body.String())
+	}
+	if !strings.Contains(tw.Body.String(), `"tool_name":"search_mail"`) || !strings.Contains(tw.Body.String(), `"state":"output-available"`) || !strings.Contains(tw.Body.String(), `"q":"x"`) {
+		t.Fatalf("persisted tool trace missing: %s", tw.Body.String())
+	}
+
+	crossTrace := httptest.NewRequest(http.MethodGet, "/api/mail-ai/trace?thread_id="+threadID, nil)
+	crossTrace = crossTrace.WithContext(context.WithValue(crossTrace.Context(), userContextKey, currentUser{User: other}))
+	ctw := httptest.NewRecorder()
+	s.handleAPI(ctw, crossTrace)
+	if ctw.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant trace=%d %s", ctw.Code, ctw.Body.String())
+	}
+
 	cross := httptest.NewRequest(http.MethodPut, "/api/mail-ai/thread", strings.NewReader(putBody))
 	cross = cross.WithContext(context.WithValue(cross.Context(), userContextKey, currentUser{User: other}))
 	cross.AddCookie(&http.Cookie{Name: csrfCookie, Value: "thread-csrf"})
