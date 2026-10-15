@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type modelRuntime struct {
@@ -71,6 +74,62 @@ func (s *server) modelConfigResponse() modelConfigResponse {
 		Model:            model,
 		APIKeyConfigured: apiKey != "",
 	}
+}
+
+func (s *server) validateModelEndpoint(ctx context.Context, baseURL, apiKey, model string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, baseURL+"/models", nil)
+	if err != nil {
+		return fmt.Errorf("validate model endpoint: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	client := s.cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 8 * time.Second}
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("model endpoint validation failed: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		detail := strings.TrimSpace(string(message))
+		if detail == "" {
+			detail = http.StatusText(res.StatusCode)
+		}
+		return fmt.Errorf("model endpoint validation status %d: %s", res.StatusCode, detail)
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&out); err != nil {
+		return fmt.Errorf("model endpoint returned invalid /models response: %w", err)
+	}
+	available := make([]string, 0, len(out.Data))
+	for _, item := range out.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		available = append(available, id)
+		if id == model {
+			return nil
+		}
+	}
+	if len(available) == 0 {
+		return errors.New("model endpoint returned no model IDs")
+	}
+	if len(available) > 8 {
+		available = available[:8]
+	}
+	return fmt.Errorf("model %q is not available; endpoint models: %s", model, strings.Join(available, ", "))
 }
 
 func (s *server) initModelConfig() error {
@@ -160,12 +219,19 @@ func (s *server) modelConfigHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_, currentKey, _ := s.currentModelConfig()
+		currentBaseURL, currentKey, _ := s.currentModelConfig()
 		apiKey := currentKey
 		if in.APIKey != nil {
 			apiKey = strings.TrimSpace(*in.APIKey)
 		} else if in.ClearAPIKey {
 			apiKey = ""
+		} else if currentKey != "" && currentBaseURL != "" && currentBaseURL != baseURL {
+			http.Error(w, "api_key must be re-entered or explicitly cleared when base_url changes", http.StatusBadRequest)
+			return
+		}
+		if err := s.validateModelEndpoint(r.Context(), baseURL, apiKey, model); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
 		}
 		if err := s.persistModelConfig(baseURL, apiKey, model); err != nil {
 			http.Error(w, "unable to save model config", http.StatusInternalServerError)
