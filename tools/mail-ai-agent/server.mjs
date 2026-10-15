@@ -169,9 +169,12 @@ const server = http.createServer(async (req, res) => {
     const response = await createAgentUIStreamResponse({ agent, uiMessages: body.messages, keepAliveMs: 15000 });
     return await sendWebResponse(response, res);
   } catch (error) {
-    console.error(error);
+    const errorType = error?.constructor?.name || typeof error;
+    const status = Number.isInteger(error?.status) ? ` status=${error.status}` : '';
+    const code = typeof error?.code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(error.code) ? ` code=${error.code}` : '';
+    console.error(`mail-ai-agent request failed type=${errorType}${status}${code}`);
     if (!res.headersSent) res.statusCode = 500;
-    if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
+    if (!res.writableEnded) res.end('mail-ai agent request failed');
   }
 });
 

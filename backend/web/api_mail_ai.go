@@ -549,7 +549,7 @@ func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				logHandlerError(r, fmt.Errorf("mail-ai agent stream: %w", readErr))
+				logHandlerError(r, fmt.Errorf("mail-ai agent stream read failure error_type=%T", readErr))
 			}
 			return
 		}
@@ -611,7 +611,7 @@ func (s *Server) proxyMailAI(w http.ResponseWriter, r *http.Request, path string
 		}
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				logHandlerError(r, fmt.Errorf("mail-ai stream: %w", readErr))
+				logHandlerError(r, fmt.Errorf("mail-ai stream read failure error_type=%T", readErr))
 			}
 			return
 		}

@@ -168,7 +168,7 @@ function MailSideChatRuntime({ csrf, thread, onPersisted }: { csrf: string; thre
       }).then((response) => {
         if (!response.ok) throw new Error(`Mail AI persistence failed (${response.status})`);
         onPersisted();
-      }).catch((error) => console.error(error));
+      }).catch(() => console.error("Mail AI request failed without logging private content"));
     }
   });
   return <AssistantRuntimeProvider runtime={runtime}>
@@ -205,7 +205,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         return await response.json() as ThreadListResponse;
       })
       .then((value) => setHistory(Array.isArray(value.threads) ? value.threads : []))
-      .catch((error) => console.error(error));
+      .catch(() => console.error("Mail AI request failed without logging private content"));
   }, []);
 
   const loadTrace = useCallback((threadID: string) => {
@@ -215,7 +215,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         return await response.json() as TraceResponse;
       })
       .then((value) => setTrace(Array.isArray(value.events) ? value.events : []))
-      .catch((error) => console.error(error));
+      .catch(() => console.error("Mail AI request failed without logging private content"));
   }, []);
 
   const loadThread = useCallback(async (url: string) => {

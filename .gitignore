@@ -22,3 +22,16 @@ coverage.out
 /rolltop
 tsconfig.tsbuildinfo
 .cache/rolltop-spam-corpus/
+runtime/
+.runtime/
+private-runtime/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.log
+*.eml
+.env
+.env.*
+!.env.example
+!.env.sample
+build-g1/
