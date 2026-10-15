@@ -76,6 +76,20 @@ func (s *server) modelConfigResponse() modelConfigResponse {
 	}
 }
 
+func modelHTTPClient(base *http.Client, fallbackTimeout time.Duration) *http.Client {
+	if base == nil {
+		base = &http.Client{Timeout: fallbackTimeout}
+	}
+	clone := *base
+	if clone.Timeout == 0 {
+		clone.Timeout = fallbackTimeout
+	}
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &clone
+}
+
 func (s *server) validateModelEndpoint(ctx context.Context, baseURL, apiKey, model string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -87,11 +101,7 @@ func (s *server) validateModelEndpoint(ctx context.Context, baseURL, apiKey, mod
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	client := s.cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 8 * time.Second}
-	}
-	res, err := client.Do(req)
+	res, err := modelHTTPClient(s.cfg.HTTPClient, 8*time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("model endpoint validation failed: %w", err)
 	}

@@ -270,7 +270,7 @@ func (s *server) complete(ctx context.Context, messages []modelMessage) (modelMe
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	res, err := s.cfg.HTTPClient.Do(req)
+	res, err := modelHTTPClient(s.cfg.HTTPClient, 90*time.Second).Do(req)
 	if err != nil {
 		return modelMessage{}, fmt.Errorf("model endpoint: %w", err)
 	}

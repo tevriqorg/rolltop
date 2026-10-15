@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -142,5 +143,28 @@ func TestConfirmationExpiresAndHealthDoesNotExposeSecrets(t *testing.T) {
 	s.health(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if strings.Contains(w.Body.String(), "never-leak") {
 		t.Fatal("health leaked shared token")
+	}
+}
+
+func TestCompleteRejectsModelRedirect(t *testing.T) {
+	targetHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits++
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"redirected"}}]}`)
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/chat/completions", http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	s := &server{cfg: config{HTTPClient: redirector.Client()}}
+	s.setModelConfig(redirector.URL, "redirect-key", "test-model")
+	_, err := s.complete(context.Background(), []modelMessage{{Role: "user", Content: "hello"}})
+	if err == nil || !strings.Contains(err.Error(), "status 307") {
+		t.Fatalf("redirect error=%v", err)
+	}
+	if targetHits != 0 {
+		t.Fatalf("redirect target was contacted %d times", targetHits)
 	}
 }

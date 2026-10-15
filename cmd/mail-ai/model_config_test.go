@@ -135,3 +135,30 @@ func TestModelConfigDoesNotLeakSavedKeyToChangedBaseURL(t *testing.T) {
 		t.Fatalf("rejected base URL change mutated config: %q %q %q", baseURL, key, model)
 	}
 }
+
+func TestModelConfigRejectsRedirectBeforeSendingKey(t *testing.T) {
+	targetHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits++
+		writeJSON(w, http.StatusOK, map[string]any{"data": []map[string]string{{"id": "hy3"}}})
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/v1/models", http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	key := "redirect-test-key"
+	s := &server{cfg: config{Shared: "secret", HTTPClient: redirector.Client()}}
+	body, _ := json.Marshal(modelConfigRequest{BaseURL: redirector.URL + "/v1", Model: "hy3", APIKey: &key})
+	r := httptest.NewRequest(http.MethodPut, "/config", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	s.modelConfigHandler(w, r)
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "status 307") {
+		t.Fatalf("redirect status=%d body=%s", w.Code, w.Body.String())
+	}
+	if targetHits != 0 {
+		t.Fatalf("redirect target was contacted %d times", targetHits)
+	}
+}
