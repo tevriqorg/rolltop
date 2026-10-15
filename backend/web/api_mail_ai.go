@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,10 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 			return
 		}
 		writeJSON(w, map[string]bool{"configured": s.mailAIURL != "" && s.mailAISharedToken != ""})
+		return
+	}
+	if path == "mail-ai/threads" {
+		s.apiMailAIThreads(w, r, cu)
 		return
 	}
 	if path == "mail-ai/thread" {
@@ -100,10 +105,79 @@ type mailAIThreadRequest struct {
 	Messages []json.RawMessage `json:"messages"`
 }
 
+type mailAIThreadCreateRequest struct {
+	Scope     string `json:"scope"`
+	MessageID int64  `json:"message_id"`
+}
+
+func (s *Server) apiMailAIThreads(w http.ResponseWriter, r *http.Request, cu currentUser) {
+	switch r.Method {
+	case http.MethodGet:
+		threads, err := s.store.ListMailAIThreadsForUser(r.Context(), cu.User.ID, 50)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		writeJSON(w, map[string]any{"threads": threads})
+	case http.MethodPost:
+		if !s.verifyCSRF(w, r) {
+			return
+		}
+		var body mailAIThreadCreateRequest
+		if !decodeMailAIJSON(w, r, &body, 16<<10) {
+			return
+		}
+		spec, err := s.mailAIThreadScopeSpec(r.Context(), cu.User.ID, body.Scope, body.MessageID)
+		if err != nil {
+			if store.IsNotFound(err) {
+				writeAPIError(w, http.StatusNotFound, "mail-ai scope message not found")
+			} else {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+			}
+			return
+		}
+		thread, err := s.store.CreateMailAIThreadForUser(r.Context(), cu.User.ID, spec)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, thread)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
 func (s *Server) apiMailAIThread(w http.ResponseWriter, r *http.Request, cu currentUser) {
 	switch r.Method {
 	case http.MethodGet:
-		thread, err := s.store.CurrentMailAIThreadForUser(r.Context(), cu.User.ID)
+		var thread store.MailAIThreadSnapshot
+		var err error
+		if threadID := strings.TrimSpace(r.URL.Query().Get("thread_id")); threadID != "" {
+			thread, err = s.store.MailAIThreadForUser(r.Context(), cu.User.ID, threadID)
+		} else {
+			messageID, parseErr := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("message_id")), 10, 64)
+			if r.URL.Query().Get("message_id") == "" {
+				messageID = 0
+			} else if parseErr != nil || messageID <= 0 {
+				writeAPIError(w, http.StatusBadRequest, "invalid message_id")
+				return
+			}
+			spec, specErr := s.mailAIThreadScopeSpec(r.Context(), cu.User.ID, r.URL.Query().Get("scope"), messageID)
+			if specErr != nil {
+				if store.IsNotFound(specErr) {
+					writeAPIError(w, http.StatusNotFound, "mail-ai scope message not found")
+				} else {
+					writeAPIError(w, http.StatusBadRequest, specErr.Error())
+				}
+				return
+			}
+			thread, err = s.store.CurrentMailAIThreadForScopeForUser(r.Context(), cu.User.ID, spec)
+		}
+		if store.IsNotFound(err) {
+			writeAPIError(w, http.StatusNotFound, "mail-ai thread not found")
+			return
+		}
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -134,6 +208,94 @@ func (s *Server) apiMailAIThread(w http.ResponseWriter, r *http.Request, cu curr
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (s *Server) mailAIThreadScopeSpec(ctx context.Context, userID int64, scope string, messageID int64) (store.MailAIThreadScopeSpec, error) {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		if messageID > 0 {
+			scope = store.MailAIThreadScopeMailThread
+		} else {
+			scope = store.MailAIThreadScopeGlobal
+		}
+	}
+	if scope == store.MailAIThreadScopeGlobal {
+		return store.MailAIThreadScopeSpec{Kind: scope, Key: scope, Context: json.RawMessage(`{"mode":"mailbox","scope":"global"}`)}, nil
+	}
+	if messageID <= 0 {
+		return store.MailAIThreadScopeSpec{}, errors.New("message_id is required for this mail-ai scope")
+	}
+	mailContext, err := s.mockMailAIContext(ctx, userID, messageID)
+	if err != nil {
+		return store.MailAIThreadScopeSpec{}, err
+	}
+	if scope != store.MailAIThreadScopeMessage && scope != store.MailAIThreadScopeMailThread {
+		return store.MailAIThreadScopeSpec{}, errors.New("invalid mail-ai scope")
+	}
+	contextValue := map[string]any{
+		"mode": "message", "scope": scope, "provider": mailContext.Provider, "account": mailContext.Account,
+		"message_id": mailContext.MessageID, "mail_thread_id": mailContext.ThreadID, "subject": mailContext.Subject,
+		"from": mailContext.From, "to": mailContext.To, "cc": mailContext.CC, "date": mailContext.Date,
+	}
+	contextJSON, err := json.Marshal(contextValue)
+	if err != nil {
+		return store.MailAIThreadScopeSpec{}, err
+	}
+	key := strconv.FormatInt(mailContext.MessageID, 10)
+	if scope == store.MailAIThreadScopeMailThread {
+		keyJSON, _ := json.Marshal([]string{mailContext.Account, mailContext.ThreadID})
+		key = string(keyJSON)
+	}
+	return store.MailAIThreadScopeSpec{Kind: scope, Key: key, Context: contextJSON}, nil
+}
+
+func (s *Server) mailAIAgentContextForThread(ctx context.Context, userID int64, thread store.MailAIThreadSnapshot) (map[string]any, error) {
+	if thread.Scope == store.MailAIThreadScopeGlobal {
+		return map[string]any{"mode": "mailbox", "scope": store.MailAIThreadScopeGlobal}, nil
+	}
+	var saved struct {
+		MessageID    int64  `json:"message_id"`
+		Account      string `json:"account"`
+		MailThreadID string `json:"mail_thread_id"`
+	}
+	if err := json.Unmarshal(thread.Context, &saved); err != nil {
+		return nil, err
+	}
+	messageID := saved.MessageID
+	if thread.Scope == store.MailAIThreadScopeMailThread {
+		mailContext, err := s.mockMailAIContext(ctx, userID, messageID)
+		if err != nil || mailContext.Account != saved.Account || mailContext.ThreadID != saved.MailThreadID {
+			messageID = 0
+			meta, listErr := s.store.ProviderMessages(ctx, userID)
+			if listErr != nil {
+				return nil, listErr
+			}
+			for _, item := range meta {
+				if item.Account == saved.Account && item.ThreadID == saved.MailThreadID {
+					messageID = item.ID
+					break
+				}
+			}
+		}
+	}
+	if messageID <= 0 {
+		return nil, store.ErrNotFound
+	}
+	mailContext, err := s.mockMailAIContext(ctx, userID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(mailContext)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	out["mode"] = "message"
+	out["scope"] = thread.Scope
+	return out, nil
 }
 
 func mailAIMessageSnapshots(rawMessages []json.RawMessage) ([]store.MailAIMessageSnapshot, error) {
@@ -203,13 +365,9 @@ func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid agent request")
 		return
 	}
-	var messageID int64
-	if raw := body["message_id"]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &messageID); err != nil || messageID < 0 {
-			writeAPIError(w, http.StatusBadRequest, "invalid message_id")
-			return
-		}
-	}
+	// Browser page context is only a positioning hint when a thread is created.
+	// Once a thread exists, its server-persisted scope is authoritative.
+	delete(body, "message_id")
 	if !json.Valid(body["messages"]) {
 		writeAPIError(w, http.StatusBadRequest, "messages are required")
 		return
@@ -229,6 +387,15 @@ func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid messages")
 		return
 	}
+	thread, err := s.store.MailAIThreadForUser(r.Context(), cu.User.ID, threadID)
+	if store.IsNotFound(err) {
+		writeAPIError(w, http.StatusNotFound, "mail-ai thread not found")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
 	if err := s.store.SaveMailAIThreadMessagesForUser(r.Context(), cu.User.ID, threadID, messages); err != nil {
 		if store.IsNotFound(err) {
 			writeAPIError(w, http.StatusNotFound, "mail-ai thread not found")
@@ -237,20 +404,14 @@ func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	contextValue := map[string]any{"mode": "mailbox"}
-	if messageID > 0 {
-		mailContext, err := s.mockMailAIContext(r.Context(), cu.User.ID, messageID)
-		if store.IsNotFound(err) {
-			writeAPIError(w, http.StatusNotFound, "message not found")
-			return
-		}
-		if err != nil {
-			s.serverError(w, r, err)
-			return
-		}
-		raw, _ := json.Marshal(mailContext)
-		_ = json.Unmarshal(raw, &contextValue)
-		contextValue["mode"] = "message"
+	contextValue, err := s.mailAIAgentContextForThread(r.Context(), cu.User.ID, thread)
+	if store.IsNotFound(err) {
+		writeAPIError(w, http.StatusNotFound, "mail-ai thread context is no longer available")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
 	}
 	userRaw, _ := json.Marshal(cu.User.ID)
 	contextRaw, _ := json.Marshal(contextValue)

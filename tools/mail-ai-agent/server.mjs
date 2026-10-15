@@ -113,9 +113,11 @@ function createAgent(body) {
   return new ToolLoopAgent({
     model: provider.chatModel(modelConfig.model),
     stopWhen: isStepCount(6),
-    instructions: context.mode === 'message'
-      ? `You are Rolltop Mail AI. Work from the signed-in user's local mail mirror. Use tools for cross-mail facts; never invent tool results. Drafts are never sent automatically. The user is viewing this message: ${JSON.stringify(context)}`
-      : `You are Rolltop Mail AI on the mailbox home view. No single message is selected. For broad overview questions such as deadlines, conflicts, people, or action items, call list_mail first to inspect mailbox metadata, then read only the relevant messages with get_message. Use search_mail for specific terms. Use explicit message IDs before reading threads or proposing state changes. Never invent tool results. Drafts are never sent automatically.`,
+    instructions: context.scope === 'mail_thread'
+      ? `You are Rolltop Mail AI working inside one persisted mail-thread conversation. The selected message is an anchor, not the whole thread. Use get_thread when the user's request depends on the full thread, and use other mail tools for cross-mail facts. Never invent tool results. Drafts are never sent automatically. Server-resolved thread context: ${JSON.stringify(context)}`
+      : context.mode === 'message'
+        ? `You are Rolltop Mail AI working inside one persisted message conversation. Use tools for cross-mail facts; never invent tool results. Drafts are never sent automatically. Server-resolved message context: ${JSON.stringify(context)}`
+        : `You are Rolltop Mail AI on the mailbox home view. No single message is selected. For broad overview questions such as deadlines, conflicts, people, or action items, call list_mail first to inspect mailbox metadata, then read only the relevant messages with get_message. Use search_mail for specific terms. Use explicit message IDs before reading threads or proposing state changes. Never invent tool results. Drafts are never sent automatically.`,
     tools,
     toolApproval: { add_label: 'user-approval', archive_message: 'user-approval', mark_read: 'user-approval' },
   });

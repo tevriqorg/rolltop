@@ -88,3 +88,68 @@ func TestMailAIConversationRejectsDuplicateMessageIDs(t *testing.T) {
 		t.Fatal("duplicate message ids were accepted")
 	}
 }
+
+func TestMailAIConversationHistorySeparatesScopesAndRestoresByID(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "rolltop.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	user, err := st.CreateUser(ctx, "mail-ai-history@example.test", "History", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := st.CurrentMailAIThreadForUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := st.CreateMailAIThreadForUser(ctx, user.ID, MailAIThreadScopeSpec{
+		Kind: MailAIThreadScopeMessage, Key: "42", Context: json.RawMessage(`{"scope":"message","message_id":42}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailThread, err := st.CreateMailAIThreadForUser(ctx, user.ID, MailAIThreadScopeSpec{
+		Kind: MailAIThreadScopeMailThread, Key: `["personal","thread-7"]`, Context: json.RawMessage(`{"scope":"mail_thread","message_id":43}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []MailAIMessageSnapshot{{
+		ID: "u-history", Role: "user", Payload: json.RawMessage(`{"id":"u-history","role":"user","parts":[{"type":"text","text":"remember this scoped conversation"}]}`),
+	}}
+	if err := st.SaveMailAIThreadMessagesForUser(ctx, user.ID, message.ID, messages); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := st.MailAIThreadForUser(ctx, user.ID, message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Scope != MailAIThreadScopeMessage || restored.Preview != "remember this scoped conversation" || restored.MessageCount != 1 {
+		t.Fatalf("restored=%+v", restored)
+	}
+	history, err := st.ListMailAIThreadsForUser(ctx, user.ID, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("history count=%d, want 3", len(history))
+	}
+	seen := map[string]string{}
+	for _, item := range history {
+		seen[item.ID] = item.Scope
+	}
+	if seen[global.ID] != MailAIThreadScopeGlobal || seen[message.ID] != MailAIThreadScopeMessage || seen[mailThread.ID] != MailAIThreadScopeMailThread {
+		t.Fatalf("history scopes=%v", seen)
+	}
+	currentMessage, err := st.CurrentMailAIThreadForScopeForUser(ctx, user.ID, MailAIThreadScopeSpec{
+		Kind: MailAIThreadScopeMessage, Key: "42", Context: json.RawMessage(`{"scope":"message","message_id":42}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentMessage.ID != message.ID {
+		t.Fatalf("current message thread=%q, want %q", currentMessage.ID, message.ID)
+	}
+}

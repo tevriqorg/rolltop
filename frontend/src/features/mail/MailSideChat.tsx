@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActionBarPrimitive,
   AssistantRuntimeProvider,
-  BranchPickerPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
@@ -15,6 +13,26 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type ModelConfig = { configured: boolean; model?: string };
+type ThreadScope = "global" | "message" | "mail_thread";
+type ThreadContext = {
+  subject?: string;
+  account?: string;
+  message_id?: number;
+  mail_thread_id?: string;
+};
+type ThreadSnapshot = {
+  thread_id: string;
+  scope: ThreadScope;
+  context: ThreadContext;
+  preview: string;
+  message_count: number;
+  messages: UIMessage[];
+  created_at: string;
+  updated_at: string;
+};
+type ThreadSummary = Omit<ThreadSnapshot, "messages">;
+
+type ThreadListResponse = { threads: ThreadSummary[] };
 
 const TOOL_LABELS: Record<string, string> = {
   list_mail: "浏览邮箱",
@@ -27,6 +45,12 @@ const TOOL_LABELS: Record<string, string> = {
   mark_read: "修改已读状态"
 };
 
+export function mailAIScopeLabel(scope: ThreadScope) {
+  if (scope === "message") return "当前邮件";
+  if (scope === "mail_thread") return "邮件线程";
+  return "全部邮箱";
+}
+
 export function toolActivityLabel(name: string, args: unknown, result: unknown, running: boolean) {
   const label = TOOL_LABELS[name] || name;
   const record = (args && typeof args === "object") ? args as Record<string, unknown> : {};
@@ -35,6 +59,7 @@ export function toolActivityLabel(name: string, args: unknown, result: unknown, 
   if (Array.isArray(result)) return `${label}完成 · ${result.length} 条结果`;
   return `${label}完成`;
 }
+
 function UserTextPart({ text }: TextMessagePartProps) {
   return <p className="mail-ai-text">{text}</p>;
 }
@@ -81,14 +106,11 @@ function AssistantMessage() {
     <MessagePrimitive.Parts components={{ Text: AssistantMarkdownPart, Reasoning: () => <div className="mail-ai-thinking">正在分析…</div>, tools: { Fallback: ToolCard } }} />
   </MessagePrimitive.Root>;
 }
-function AssistantThread({ model }: { model: string }) {
+
+function AssistantThread({ empty }: { empty: boolean }) {
   return <ThreadPrimitive.Root className="mail-ai-thread">
-    <header className="mail-ai-assistant-header">
-      <div><strong>Mail AI</strong><span>{model || "Agent"}</span></div>
-      <span className="mail-ai-runtime-badge">ToolLoopAgent</span>
-    </header>
     <ThreadPrimitive.Viewport className="mail-ai-assistant-viewport">
-      <div className="mail-ai-empty">可以搜索三个邮箱、阅读线程、总结邮件或起草回复。工具执行过程会显示在这里。</div>
+      {empty ? <div className="mail-ai-empty">可以搜索三个邮箱、阅读线程、总结邮件或起草回复。工具执行过程会显示在这里。</div> : null}
       <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
       <ThreadPrimitive.ViewportFooter className="mail-ai-assistant-footer">
         <ComposerPrimitive.Root className="mail-ai-composer">
@@ -100,17 +122,12 @@ function AssistantThread({ model }: { model: string }) {
   </ThreadPrimitive.Root>;
 }
 
-type ThreadSnapshot = {
-  thread_id: string;
-  messages: UIMessage[];
-};
-
-function MailSideChatRuntime({ csrf, messageID, thread, model }: { csrf: string; messageID: number; thread: ThreadSnapshot; model: string }) {
+function MailSideChatRuntime({ csrf, thread, onPersisted }: { csrf: string; thread: ThreadSnapshot; onPersisted: () => void }) {
   const transport = useMemo(() => new AssistantChatTransport({
     api: "/api/mail-ai/agent",
     headers: { "X-CSRF-Token": csrf },
-    body: { message_id: messageID, thread_id: thread.thread_id }
-  }), [csrf, messageID, thread.thread_id]);
+    body: { thread_id: thread.thread_id }
+  }), [csrf, thread.thread_id]);
   const runtime = useChatRuntime<UIMessage>({
     messages: thread.messages,
     transport,
@@ -123,49 +140,141 @@ function MailSideChatRuntime({ csrf, messageID, thread, model }: { csrf: string;
         body: JSON.stringify({ thread_id: thread.thread_id, messages })
       }).then((response) => {
         if (!response.ok) throw new Error(`Mail AI persistence failed (${response.status})`);
+        onPersisted();
       }).catch((error) => console.error(error));
     }
   });
   return <AssistantRuntimeProvider runtime={runtime}>
-    <AssistantThread model={model} />
+    <AssistantThread empty={thread.messages.length === 0} />
   </AssistantRuntimeProvider>;
+}
+
+function threadTitle(thread: ThreadSummary | ThreadSnapshot) {
+  return thread.preview || thread.context?.subject || "新会话";
+}
+
+function threadTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: string; messageID: number; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const [model, setModel] = useState("Agent");
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
+  const [history, setHistory] = useState<ThreadSummary[]>([]);
   const [threadError, setThreadError] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const loadHistory = useCallback(() => {
+    void fetch("/api/mail-ai/threads", { headers: { Accept: "application/json" }, cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Mail AI history failed (${response.status})`);
+        return await response.json() as ThreadListResponse;
+      })
+      .then((value) => setHistory(Array.isArray(value.threads) ? value.threads : []))
+      .catch((error) => console.error(error));
+  }, []);
+
+  const loadThread = useCallback(async (url: string) => {
+    setBusy(true);
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) throw new Error(`Mail AI history failed (${response.status})`);
+      const value = await response.json() as ThreadSnapshot;
+      if (!value.thread_id || !Array.isArray(value.messages)) throw new Error("Mail AI history response is invalid");
+      setThread(value);
+      setThreadError("");
+      return value;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     void fetch("/api/mail-ai/model-config", { headers: { Accept: "application/json" }, cache: "no-store" })
       .then(async (response) => response.ok ? await response.json() as ModelConfig : null)
       .then((value) => { if (active && value?.model) setModel(value.model); })
       .catch(() => undefined);
-    void fetch("/api/mail-ai/thread", { headers: { Accept: "application/json" }, cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`Mail AI history failed (${response.status})`);
-        return await response.json() as ThreadSnapshot;
-      })
-      .then((value) => {
-        if (!active) return;
-        if (!value.thread_id || !Array.isArray(value.messages)) throw new Error("Mail AI history response is invalid");
-        setThread(value);
-        setThreadError("");
-      })
-      .catch((error) => {
-        if (active) setThreadError(error instanceof Error ? error.message : "Mail AI history unavailable");
-      });
+    const params = new URLSearchParams({ scope: messageID > 0 ? "mail_thread" : "global" });
+    if (messageID > 0) params.set("message_id", String(messageID));
+    void loadThread(`/api/mail-ai/thread?${params.toString()}`)
+      .then(() => { if (active) loadHistory(); })
+      .catch((error) => { if (active) setThreadError(error instanceof Error ? error.message : "Mail AI history unavailable"); });
     return () => { active = false; };
-  }, []);
+  }, [loadHistory, loadThread, messageID]);
+
+  const restoreThread = async (threadID: string) => {
+    try {
+      await loadThread(`/api/mail-ai/thread?thread_id=${encodeURIComponent(threadID)}`);
+      setShowHistory(false);
+      setShowNew(false);
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : "Mail AI history unavailable");
+    }
+  };
+
+  const createThread = async (scope: ThreadScope) => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/mail-ai/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ scope, message_id: messageID })
+      });
+      if (!response.ok) throw new Error(`Mail AI new conversation failed (${response.status})`);
+      const value = await response.json() as ThreadSnapshot;
+      setThread(value);
+      setThreadError("");
+      setShowNew(false);
+      setShowHistory(false);
+      loadHistory();
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : "Mail AI new conversation unavailable");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (!open) {
     return <button className="mail-ai-launch" type="button" onClick={() => setOpen(true)}>AI</button>;
   }
+  const availableScopes: ThreadScope[] = messageID > 0 ? ["mail_thread", "message", "global"] : ["global"];
   return <aside className="mail-ai-panel mail-ai-panel-assistant" aria-label="Mail AI Side Chat">
     <button className="mail-ai-close ghost" type="button" onClick={() => setOpen(false)} aria-label="Close Mail AI">×</button>
-    {threadError ? <div className="mail-ai-empty">{threadError}</div> : null}
+    <header className="mail-ai-assistant-header">
+      <div className="mail-ai-header-title">
+        <strong>Mail AI</strong>
+        <span>{thread ? `${mailAIScopeLabel(thread.scope)} · ${thread.context?.subject || model}` : model}</span>
+      </div>
+      <div className="mail-ai-header-actions">
+        <button type="button" className="ghost" disabled={busy} onClick={() => { setShowNew((value) => !value); setShowHistory(false); }}>新建</button>
+        <button type="button" className="ghost" disabled={busy} onClick={() => { setShowHistory((value) => !value); setShowNew(false); loadHistory(); }}>历史</button>
+      </div>
+    </header>
+    {showNew ? <section className="mail-ai-new-menu" aria-label="New Mail AI conversation">
+      <strong>新建会话范围</strong>
+      <div>{availableScopes.map((scope) => <button type="button" key={scope} disabled={busy} onClick={() => void createThread(scope)}>{mailAIScopeLabel(scope)}</button>)}</div>
+    </section> : null}
+    {showHistory ? <section className="mail-ai-history" aria-label="Mail AI conversation history">
+      {history.length === 0 ? <div className="mail-ai-empty">还没有历史会话。</div> : history.map((item) => <button
+        type="button"
+        key={item.thread_id}
+        className={`mail-ai-history-item${item.thread_id === thread?.thread_id ? " active" : ""}`}
+        onClick={() => void restoreThread(item.thread_id)}
+      >
+        <span className="mail-ai-history-row"><strong>{mailAIScopeLabel(item.scope)}</strong><time>{threadTime(item.updated_at)}</time></span>
+        <span className="mail-ai-history-title">{threadTitle(item)}</span>
+      </button>)}
+    </section> : null}
+    {threadError ? <div className="mail-ai-empty mail-ai-error">{threadError}</div> : null}
     {!thread && !threadError ? <div className="mail-ai-empty">正在恢复 Mail AI 对话…</div> : null}
-    {thread ? <MailSideChatRuntime csrf={csrf} messageID={messageID} thread={thread} model={model} /> : null}
+    {thread ? <div className="mail-ai-runtime-shell" key={thread.thread_id}>
+      <MailSideChatRuntime csrf={csrf} thread={thread} onPersisted={loadHistory} />
+    </div> : null}
   </aside>;
 }

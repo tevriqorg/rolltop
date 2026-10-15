@@ -282,3 +282,93 @@ func TestMailAIAgentPersistsRequestSnapshotBeforeProxy(t *testing.T) {
 		t.Fatalf("agent request snapshot not persisted: %s", restored.Messages)
 	}
 }
+
+func TestMailAIHistoryCreatesRestoresScopesAndAgentUsesStoredScope(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	index, err := search.Open(filepath.Join(dir, "bleve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	owner, _ := st.CreateUser(ctx, "history-owner@example.invalid", "Owner", "hash", false)
+	other, _ := st.CreateUser(ctx, "history-other@example.invalid", "Other", "hash", false)
+	hub := mailhub.Service{Store: st, Blobs: blob.New(dir), Search: index}
+	for _, account := range provider.MockAccounts(owner.ID) {
+		if err := hub.Sync(ctx, account); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messages, err := hub.Messages(ctx, owner.ID, mailhub.Filter{})
+	if err != nil || len(messages) < 2 {
+		t.Fatalf("mock messages=%d err=%v", len(messages), err)
+	}
+	var receivedContext map[string]any
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body["context"], &receivedContext); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: ok\n\n"))
+	}))
+	defer sidecar.Close()
+	s := &Server{store: st, blobs: hub.Blobs, search: index, mailAIURL: sidecar.URL, mailAISharedToken: "history-secret", mailAIHTTPClient: sidecar.Client()}
+	withAuth := func(r *http.Request, user store.User) *http.Request {
+		r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: user}))
+		r.AddCookie(&http.Cookie{Name: csrfCookie, Value: "history-csrf"})
+		r.Header.Set("X-CSRF-Token", s.csrfForBase("history-csrf"))
+		return r
+	}
+	createBody := `{"scope":"mail_thread","message_id":` + strconvInt64(messages[0].ID) + `}`
+	create := withAuth(httptest.NewRequest(http.MethodPost, "/api/mail-ai/threads", strings.NewReader(createBody)), owner)
+	cw := httptest.NewRecorder()
+	s.handleAPI(cw, create)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("create thread=%d %s", cw.Code, cw.Body.String())
+	}
+	var created store.MailAIThreadSnapshot
+	if err := json.Unmarshal(cw.Body.Bytes(), &created); err != nil || created.ID == "" || created.Scope != store.MailAIThreadScopeMailThread {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	list := withAuth(httptest.NewRequest(http.MethodGet, "/api/mail-ai/threads", nil), owner)
+	lw := httptest.NewRecorder()
+	s.handleAPI(lw, list)
+	if lw.Code != http.StatusOK || !strings.Contains(lw.Body.String(), created.ID) || !strings.Contains(lw.Body.String(), `"scope":"mail_thread"`) {
+		t.Fatalf("history=%d %s", lw.Code, lw.Body.String())
+	}
+	restore := withAuth(httptest.NewRequest(http.MethodGet, "/api/mail-ai/thread?thread_id="+created.ID, nil), owner)
+	rw := httptest.NewRecorder()
+	s.handleAPI(rw, restore)
+	if rw.Code != http.StatusOK || !strings.Contains(rw.Body.String(), created.ID) {
+		t.Fatalf("restore=%d %s", rw.Code, rw.Body.String())
+	}
+	cross := withAuth(httptest.NewRequest(http.MethodGet, "/api/mail-ai/thread?thread_id="+created.ID, nil), other)
+	xw := httptest.NewRecorder()
+	s.handleAPI(xw, cross)
+	if xw.Code != http.StatusNotFound {
+		t.Fatalf("cross tenant restore=%d %s", xw.Code, xw.Body.String())
+	}
+	agentBody := `{"message_id":` + strconvInt64(messages[1].ID) + `,"thread_id":"` + created.ID + `","messages":[{"id":"u-scope","role":"user","parts":[{"type":"text","text":"stay in saved scope"}]}]}`
+	agent := withAuth(httptest.NewRequest(http.MethodPost, "/api/mail-ai/agent", strings.NewReader(agentBody)), owner)
+	aw := httptest.NewRecorder()
+	s.handleAPI(aw, agent)
+	if aw.Code != http.StatusOK {
+		t.Fatalf("agent=%d %s", aw.Code, aw.Body.String())
+	}
+	if receivedContext["scope"] != store.MailAIThreadScopeMailThread {
+		t.Fatalf("agent scope=%v", receivedContext["scope"])
+	}
+	gotMessageID, ok := receivedContext["message_id"].(float64)
+	if !ok || int64(gotMessageID) != messages[0].ID {
+		t.Fatalf("agent message_id=%v, want saved scope message %d", receivedContext["message_id"], messages[0].ID)
+	}
+}
