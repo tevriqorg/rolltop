@@ -12,6 +12,60 @@ import (
 	"rolltop/backend/plugins"
 )
 
+func TestConcurrentColdUserStoreOpenRunsMigrationsOnce(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	st, err := OpenServer(filepath.Join(dataDir, "rolltop.db"), dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	user, err := st.CreateUser(ctx, "cold-open@example.test", "Cold Open", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 12
+	start := make(chan struct{})
+	stores := make(chan *Store, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			<-start
+			us, err := st.UserStore(ctx, user.ID)
+			if err != nil {
+				errs <- err
+				return
+			}
+			stores <- us
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(stores)
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent cold open: %v", err)
+	}
+	var first *Store
+	for us := range stores {
+		if first == nil {
+			first = us
+			continue
+		}
+		if us != first {
+			t.Fatal("concurrent cold open returned multiple user Store handles")
+		}
+	}
+	if first == nil {
+		t.Fatal("concurrent cold open returned no user Store")
+	}
+}
+
 func TestOpenServerKeepsReadSlotAlongsideTenantWriter(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
