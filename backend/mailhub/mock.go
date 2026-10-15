@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
+	"strings"
 
 	"rolltop/backend/blob"
 	"rolltop/backend/evidence"
@@ -23,20 +25,40 @@ type Service struct {
 	Search *search.Service
 }
 
-func (s Service) Source(ctx context.Context, a provider.Account) (provider.MockMailbox, error) {
+type mockSource interface {
+	provider.MailProvider
+	Snapshot(context.Context) ([]provider.Message, error)
+	Mutate(context.Context, provider.Mutation) error
+	Census(context.Context, provider.Account) (provider.Census, error)
+}
+
+func Accounts(userID int64) []provider.Account {
+	if strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")) != "" {
+		return []provider.Account{{UserID: userID, ID: "personal", Provider: provider.Mock}}
+	}
+	return provider.MockAccounts(userID)
+}
+
+func (s Service) Source(ctx context.Context, a provider.Account) (mockSource, error) {
+	if base := strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")); base != "" {
+		if a.ID != "personal" {
+			return nil, errors.New("remote mock source exposes only personal account")
+		}
+		return provider.RemoteMockMailbox{Account: a, BaseURL: base}, nil
+	}
 	p := provider.MockMailbox{Account: a}
 	journal, err := s.Store.ProviderJournal(ctx, a.UserID, a.ID)
 	if err != nil {
-		return p, err
+		return &p, err
 	}
 	for _, data := range journal {
 		var change provider.Mutation
 		if err := json.Unmarshal([]byte(data), &change); err != nil {
-			return p, err
+			return &p, err
 		}
 		p.Journal = append(p.Journal, change)
 	}
-	return p, nil
+	return &p, nil
 }
 func (s Service) Mutate(ctx context.Context, a provider.Account, change provider.Mutation) error {
 	if a.Provider != provider.Mock {
@@ -52,12 +74,14 @@ func (s Service) Mutate(ctx context.Context, a provider.Account, change provider
 	if err = p.Mutate(ctx, change); err != nil {
 		return err
 	}
-	data, err := json.Marshal(change)
-	if err != nil {
-		return err
-	}
-	if err = s.Store.AppendProviderMutation(ctx, a.UserID, a.ID, string(data)); err != nil {
-		return err
+	if strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")) == "" {
+		data, err := json.Marshal(change)
+		if err != nil {
+			return err
+		}
+		if err = s.Store.AppendProviderMutation(ctx, a.UserID, a.ID, string(data)); err != nil {
+			return err
+		}
 	}
 	// Source mutation is durable before updating the mirror. A failed projection
 	// leaves the checkpoint unchanged and is replayed by the next Sync.

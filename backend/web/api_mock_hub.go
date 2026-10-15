@@ -42,7 +42,7 @@ func (s *Server) apiMockHub(w http.ResponseWriter, r *http.Request, path string)
 			return
 		}
 		census := []provider.Census{}
-		for _, a := range provider.MockAccounts(cu.User.ID) {
+		for _, a := range mailhub.Accounts(cu.User.ID) {
 			p, err := hub.Source(r.Context(), a)
 			if err != nil {
 				s.serverError(w, r, err)
@@ -81,7 +81,7 @@ func (s *Server) apiMockHub(w http.ResponseWriter, r *http.Request, path string)
 		return
 	}
 	if path == "mock-hub/sync" {
-		for _, a := range provider.MockAccounts(cu.User.ID) {
+		for _, a := range mailhub.Accounts(cu.User.ID) {
 			if err := hub.Sync(r.Context(), a); err != nil {
 				s.serverError(w, r, err)
 				return
@@ -103,18 +103,14 @@ func (s *Server) apiMockHub(w http.ResponseWriter, r *http.Request, path string)
 			writeAPIError(w, 400, "unknown mock account")
 			return
 		}
+		switch body.Mutation.Action {
+		case "read", "star", "label", "archive", "trash":
+		default:
+			writeAPIError(w, 400, "unsupported mock mutation")
+			return
+		}
 		a := provider.Account{UserID: cu.User.ID, ID: body.Account, Provider: provider.Mock}
-		// Validate before journaling; only the fixed mock source can be changed.
-		p, err := hub.Source(r.Context(), a)
-		if err != nil {
-			s.serverError(w, r, err)
-			return
-		}
-		if err = p.Mutate(r.Context(), body.Mutation); err != nil {
-			writeAPIError(w, 400, err.Error())
-			return
-		}
-		if err = hub.Mutate(r.Context(), a, body.Mutation); err != nil {
+		if err := hub.Mutate(r.Context(), a, body.Mutation); err != nil {
 			s.serverError(w, r, err)
 			return
 		}
