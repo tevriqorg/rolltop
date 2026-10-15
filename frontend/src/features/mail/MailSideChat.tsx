@@ -62,6 +62,14 @@ export function mailAIScopeLabel(scope: ThreadScope) {
   return "全部邮箱";
 }
 
+export function mailAIWorkspaceInitialScope(messageID: number): ThreadScope {
+  return messageID > 0 ? "mail_thread" : "global";
+}
+
+export function mailAIWorkspaceAvailableScopes(messageID: number): ThreadScope[] {
+  return messageID > 0 ? ["mail_thread", "message", "global"] : ["global"];
+}
+
 export function toolActivityLabel(name: string, args: unknown, result: unknown, running: boolean) {
   const label = TOOL_LABELS[name] || name;
   const record = (args && typeof args === "object") ? args as Record<string, unknown> : {};
@@ -239,7 +247,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
       .then(async (response) => response.ok ? await response.json() as ModelConfig : null)
       .then((value) => { if (active && value?.model) setModel(value.model); })
       .catch(() => undefined);
-    const params = new URLSearchParams({ scope: messageID > 0 ? "mail_thread" : "global" });
+    const params = new URLSearchParams({ scope: mailAIWorkspaceInitialScope(messageID) });
     if (messageID > 0) params.set("message_id", String(messageID));
     void loadThread(`/api/mail-ai/thread?${params.toString()}`)
       .then(() => { if (active) loadHistory(); })
@@ -285,7 +293,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
   if (!open) {
     return <button className="mail-ai-launch" type="button" onClick={() => setOpen(true)}>AI</button>;
   }
-  const availableScopes: ThreadScope[] = messageID > 0 ? ["mail_thread", "message", "global"] : ["global"];
+  const availableScopes = mailAIWorkspaceAvailableScopes(messageID);
   return <aside className="mail-ai-panel mail-ai-panel-assistant" aria-label="Mail AI Side Chat">
     <button className="mail-ai-close ghost" type="button" onClick={() => setOpen(false)} aria-label="Close Mail AI">×</button>
     <header className="mail-ai-assistant-header">

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc -b --pretty false",
-    "pretest": "npm run privacy:check",
+    "pretest": "npm run privacy:check && npm run workspace:test",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "npm run typecheck && vite build && npm run build:plugins",
@@ -20,7 +20,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "android:build": "./android/gradlew -p android :app:assembleDebug",
     "build:carddav-sync-css": "mkdir -p plugins/carddav_sync/frontend_dist && sass plugins/carddav_sync/frontend/styles.css plugins/carddav_sync/frontend_dist/styles.css --style=compressed",
-    "privacy:check": "node .github/scripts/privacy-boundary-check.mjs"
+    "privacy:check": "node .github/scripts/privacy-boundary-check.mjs",
+    "workspace:test": "node --test tools/mail-ai-agent/workspace.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.69",

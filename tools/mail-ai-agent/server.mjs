@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { ToolLoopAgent, createAgentUIStreamResponse, isStepCount, tool } from 'ai';
 import { z } from 'zod';
+import { assertMailAIWorkspaceTools, mailAIWorkspaceInstructions } from './workspace.mjs';
 
 const addr = process.env.MAIL_AI_ADDR || '127.0.0.1:18091';
 const [host, portText] = addr.split(':');
@@ -54,7 +55,7 @@ async function hubTool(userID, name, args, confirmed = false) {
 }
 
 function createTools({ userID, context, fallbackQuery }) {
-  return {
+  return assertMailAIWorkspaceTools({
     list_mail: tool({
       description: 'List recent mail metadata across connected mailboxes without loading message bodies. Use this first for broad mailbox overview questions, deadlines, conflicts, action items, or when search terms are unknown.',
       inputSchema: z.object({ account: z.string().trim().optional(), limit: z.number().int().min(1).max(20).optional() }),
@@ -98,7 +99,7 @@ function createTools({ userID, context, fallbackQuery }) {
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), read: z.boolean() }),
       execute: async ({ message_id, read }) => hubTool(userID, 'mark_read', { message_id: message_id || context.message_id, read }, true),
     }),
-  };
+  });
 }
 
 function createAgent(body) {
@@ -113,11 +114,7 @@ function createAgent(body) {
   return new ToolLoopAgent({
     model: provider.chatModel(modelConfig.model),
     stopWhen: isStepCount(6),
-    instructions: context.scope === 'mail_thread'
-      ? `You are Rolltop Mail AI working inside one persisted mail-thread conversation. The selected message is an anchor, not the whole thread. Use get_thread when the user's request depends on the full thread, and use other mail tools for cross-mail facts. Never invent tool results. Drafts are never sent automatically. Server-resolved thread context: ${JSON.stringify(context)}`
-      : context.mode === 'message'
-        ? `You are Rolltop Mail AI working inside one persisted message conversation. Use tools for cross-mail facts; never invent tool results. Drafts are never sent automatically. Server-resolved message context: ${JSON.stringify(context)}`
-        : `You are Rolltop Mail AI on the mailbox home view. No single message is selected. For broad overview questions such as deadlines, conflicts, people, or action items, call list_mail first to inspect mailbox metadata, then read only the relevant messages with get_message. Use search_mail for specific terms. Use explicit message IDs before reading threads or proposing state changes. Never invent tool results. Drafts are never sent automatically.`,
+    instructions: mailAIWorkspaceInstructions(context),
     tools,
     toolApproval: { add_label: 'user-approval', archive_message: 'user-approval', mark_read: 'user-approval' },
   });

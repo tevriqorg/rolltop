@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailAIScopeLabel, toolActivityLabel, traceResultSummary } from "./MailSideChat";
+import { mailAIScopeLabel, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, toolActivityLabel, traceResultSummary } from "./MailSideChat";
 
 describe("MailSideChat tool activity", () => {
   it("shows useful mail-search progress instead of raw tool JSON", () => {
@@ -15,6 +15,13 @@ describe("MailSideChat tool activity", () => {
     expect(mailAIScopeLabel("global")).toBe("全部邮箱");
     expect(mailAIScopeLabel("message")).toBe("当前邮件");
     expect(mailAIScopeLabel("mail_thread")).toBe("邮件线程");
+  });
+
+  it("enters the Agent Workspace in the correct page context", () => {
+    expect(mailAIWorkspaceInitialScope(0)).toBe("global");
+    expect(mailAIWorkspaceAvailableScopes(0)).toEqual(["global"]);
+    expect(mailAIWorkspaceInitialScope(42)).toBe("mail_thread");
+    expect(mailAIWorkspaceAvailableScopes(42)).toEqual(["mail_thread", "message", "global"]);
   });
 
   it("summarizes auditable trace results without requiring reasoning text", () => {
