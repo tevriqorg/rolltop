@@ -27,6 +27,7 @@ import { messageSecurityIndicators, messageSecurityPreviewText, messageSecurityS
 import type { RuntimePlugin } from "../../plugins/runtime";
 import { defaultSwipePreferences, swipeActionPresentation, swipeSnoozeUntil } from "../../lib/swipeActions";
 import { SnoozeControl } from "./SnoozeControl";
+import { MailSideChat } from "./MailSideChat";
 
 type SearchActionPlugin = RuntimePlugin & {
   renderSearchActions?: (context: {
@@ -390,6 +391,7 @@ export function MailView({
           loading: listPending
         }}
       />
+      {!mailbox ? <MailSideChat csrf={csrf} messageID={0} defaultOpen /> : null}
       <div
         className={`mail-pull-refresh${pullRefresh.distance > 0 ? " pulling" : ""}${pullRefresh.ready ? " ready" : ""}${pullRefreshing ? " refreshing" : ""}`}
         ref={pullRefresh.targetRef}

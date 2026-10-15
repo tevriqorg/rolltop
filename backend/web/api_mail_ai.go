@@ -115,21 +115,33 @@ func (s *Server) apiMailAIAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var messageID int64
-	if err := json.Unmarshal(body["message_id"], &messageID); err != nil || messageID <= 0 || !json.Valid(body["messages"]) {
-		writeAPIError(w, http.StatusBadRequest, "message_id and messages are required")
+	if raw := body["message_id"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &messageID); err != nil || messageID < 0 {
+			writeAPIError(w, http.StatusBadRequest, "invalid message_id")
+			return
+		}
+	}
+	if !json.Valid(body["messages"]) {
+		writeAPIError(w, http.StatusBadRequest, "messages are required")
 		return
 	}
-	context, err := s.mockMailAIContext(r.Context(), cu.User.ID, messageID)
-	if store.IsNotFound(err) {
-		writeAPIError(w, http.StatusNotFound, "message not found")
-		return
-	}
-	if err != nil {
-		s.serverError(w, r, err)
-		return
+	contextValue := map[string]any{"mode": "mailbox"}
+	if messageID > 0 {
+		mailContext, err := s.mockMailAIContext(r.Context(), cu.User.ID, messageID)
+		if store.IsNotFound(err) {
+			writeAPIError(w, http.StatusNotFound, "message not found")
+			return
+		}
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		raw, _ := json.Marshal(mailContext)
+		_ = json.Unmarshal(raw, &contextValue)
+		contextValue["mode"] = "message"
 	}
 	userRaw, _ := json.Marshal(cu.User.ID)
-	contextRaw, _ := json.Marshal(context)
+	contextRaw, _ := json.Marshal(contextValue)
 	body["user_id"] = userRaw
 	body["context"] = contextRaw
 	encoded, err := json.Marshal(body)
@@ -286,6 +298,36 @@ func subtleConstantCompare(a, b string) bool {
 func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.ToolResponse, int, error) {
 	hub := mailhub.Service{Store: s.store, Blobs: s.blobs, Search: s.search}
 	switch in.Name {
+	case "list_mail":
+		var args struct {
+			Account string `json:"account"`
+			Limit   int    `json:"limit"`
+		}
+		if err := json.Unmarshal(in.Arguments, &args); err != nil {
+			return mailai.ToolResponse{}, 400, errors.New("invalid list_mail arguments")
+		}
+		if args.Limit <= 0 || args.Limit > 20 {
+			args.Limit = 20
+		}
+		messages, err := hub.Messages(r.Context(), in.UserID, mailhub.Filter{Account: strings.TrimSpace(args.Account)})
+		if err != nil {
+			return mailai.ToolResponse{}, 500, err
+		}
+		if len(messages) > args.Limit {
+			messages = messages[:args.Limit]
+		}
+		items := make([]map[string]any, 0, len(messages))
+		for _, m := range messages {
+			ctx, err := s.mockMailAIContext(r.Context(), in.UserID, m.ID)
+			if err != nil {
+				return mailai.ToolResponse{}, 500, err
+			}
+			items = append(items, map[string]any{
+				"message_id": ctx.MessageID, "account": ctx.Account, "thread_id": ctx.ThreadID,
+				"subject": ctx.Subject, "from": ctx.From, "date": ctx.Date,
+			})
+		}
+		return mailai.ToolResponse{Name: in.Name, Result: items}, 200, nil
 	case "search_mail":
 		var args struct {
 			Q string `json:"q"`

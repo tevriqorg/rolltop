@@ -13,6 +13,7 @@ import { lastAssistantMessageIsCompleteWithApprovalResponses } from "ai";
 type ModelConfig = { configured: boolean; model?: string };
 
 const TOOL_LABELS: Record<string, string> = {
+  list_mail: "浏览邮箱",
   search_mail: "搜索邮件",
   get_message: "读取邮件",
   get_thread: "读取邮件线程",
@@ -90,7 +91,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
   const transport = useMemo(() => new AssistantChatTransport({
     api: "/api/mail-ai/agent",
     headers: { "X-CSRF-Token": csrf },
-    prepareSendMessagesRequest: async ({ body }) => ({ body: { ...body, message_id: messageID } })
+    body: { message_id: messageID }
   }), [csrf, messageID]);
   const runtime = useChatRuntime({
     id: `mail-${messageID}`,
@@ -107,7 +108,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
   }, []);
 
   if (!open) {
-    return <button className="mail-ai-launch" type="button" onClick={() => setOpen(true)} disabled={messageID <= 0}>AI</button>;
+    return <button className="mail-ai-launch" type="button" onClick={() => setOpen(true)}>AI</button>;
   }
   return <aside className="mail-ai-panel mail-ai-panel-assistant" aria-label="Mail AI Side Chat">
     <button className="mail-ai-close ghost" type="button" onClick={() => setOpen(false)} aria-label="Close Mail AI">×</button>

@@ -55,6 +55,11 @@ async function hubTool(userID, name, args, confirmed = false) {
 
 function createTools({ userID, context, fallbackQuery }) {
   return {
+    list_mail: tool({
+      description: 'List recent mail metadata across connected mailboxes without loading message bodies. Use this first for broad mailbox overview questions, deadlines, conflicts, action items, or when search terms are unknown.',
+      inputSchema: z.object({ account: z.string().trim().optional(), limit: z.number().int().min(1).max(20).optional() }),
+      execute: async ({ account, limit }) => hubTool(userID, 'list_mail', { ...(account ? { account } : {}), limit: limit || 20 }),
+    }),
     search_mail: tool({
       description: 'Search all connected mailboxes in Rolltop. Use this for cross-account lookup.',
       inputSchema: z.object({ q: z.string().trim().optional() }),
@@ -107,8 +112,10 @@ function createAgent(body) {
   const tools = createTools({ userID: body.user_id, context, fallbackQuery });
   return new ToolLoopAgent({
     model: provider.chatModel(modelConfig.model),
-    stopWhen: isStepCount(10),
-    instructions: `You are Rolltop Mail AI. Work from the signed-in user's local mail mirror. Use tools for cross-mail facts; never invent tool results. Drafts are never sent automatically. Current mail context: ${JSON.stringify(context)}`,
+    stopWhen: isStepCount(6),
+    instructions: context.mode === 'message'
+      ? `You are Rolltop Mail AI. Work from the signed-in user's local mail mirror. Use tools for cross-mail facts; never invent tool results. Drafts are never sent automatically. The user is viewing this message: ${JSON.stringify(context)}`
+      : `You are Rolltop Mail AI on the mailbox home view. No single message is selected. For broad overview questions such as deadlines, conflicts, people, or action items, call list_mail first to inspect mailbox metadata, then read only the relevant messages with get_message. Use search_mail for specific terms. Use explicit message IDs before reading threads or proposing state changes. Never invent tool results. Drafts are never sent automatically.`,
     tools,
     toolApproval: { add_label: 'user-approval', archive_message: 'user-approval', mark_read: 'user-approval' },
   });
@@ -152,7 +159,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.url !== '/agent' || req.method !== 'POST') { res.statusCode = 404; return res.end('not found'); }
     const body = await readJSON(req);
-    if (!Number.isInteger(body.user_id) || body.user_id <= 0 || !body.context?.message_id || !Array.isArray(body.messages)) {
+    if (!Number.isInteger(body.user_id) || body.user_id <= 0 || !body.context?.mode || !Array.isArray(body.messages)) {
       res.statusCode = 400; return res.end('invalid agent request');
     }
     if (!publicConfig().configured) { res.statusCode = 503; return res.end('model is not configured'); }
