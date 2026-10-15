@@ -56,6 +56,29 @@ function compact(value: unknown) {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
+function toolArgs(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function toolCallText(tool: string | undefined, value: unknown) {
+  const args = toolArgs(value);
+  switch (tool) {
+    case "search_mail": return `Searching mail · ${String(args.q || "query")}`;
+    case "get_message": return `Reading message #${String(args.message_id || "current")}`;
+    case "get_thread": return `Reading conversation · ${String(args.thread_id || "current")}`;
+    case "draft_reply": return `Drafting a reply for message #${String(args.message_id || "current")}`;
+    case "add_label": return `Preparing label change · ${String(args.label || "")}`.trim();
+    case "archive_message": return `Preparing to archive message #${String(args.message_id || "current")}`;
+    case "mark_read": return `Preparing read-state change for message #${String(args.message_id || "current")}`;
+    default: return `Using ${tool || "tool"}`;
+  }
+}
+
+function toolResultText(tool: string | undefined, result: unknown) {
+  if (Array.isArray(result)) return `${tool === "search_mail" ? "Search" : "Tool"} complete · ${result.length} result${result.length === 1 ? "" : "s"}`;
+  return `${tool || "Tool"} complete`;
+}
+
 export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: string; messageID: number; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
@@ -93,13 +116,19 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
   function onEvent(event: MailAIEvent, assistantID: number) {
     switch (event.type) {
       case "context":
-        pushTrace("Current mail context attached by Mail Hub.");
+        pushTrace("Mail context ready.");
+        break;
+      case "status":
+        if (event.text) pushTrace(event.text, "status");
         break;
       case "tool_call":
-        pushTrace(`Tool → ${event.tool || "unknown"} ${compact(event.arguments || {})}`, "tool");
+        pushTrace(toolCallText(event.tool, event.arguments), "tool");
         break;
       case "tool_result":
-        pushTrace(`Tool ✓ ${event.tool || "unknown"}`, "tool");
+        pushTrace(toolResultText(event.tool, event.result), "tool");
+        break;
+      case "tool_error":
+        pushTrace(`${event.tool || "Tool"} hit a recoverable issue · ${event.text || "retrying"}`, "error");
         break;
       case "confirmation_required":
         if (event.action_token && event.tool) {
@@ -228,7 +257,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         {lines.length === 0 ? <p className="muted">Ask about this mail, search history, or draft a reply. Drafts are never sent automatically.</p> : null}
         {lines.map((line) => <div className={`mail-ai-line ${line.role}`} key={line.id}><strong>{line.role === "user" ? "You" : "AI"}</strong><p>{line.text || (busy ? "…" : "")}</p></div>)}
       </div>
-      {trace.length > 0 ? <details className="mail-ai-trace" open><summary>Tool activity</summary>{trace.map((item) => <p className={item.kind} key={item.id}>{item.text}</p>)}</details> : null}
+      {trace.length > 0 ? <details className="mail-ai-trace" open><summary>AI work trace</summary>{trace.map((item) => <p className={item.kind} key={item.id}>{item.text}</p>)}</details> : null}
       {pending.map((action) => <section className="mail-ai-confirm" key={action.id} aria-label={`Confirm ${action.tool}`}>
         <strong>Confirm action: {action.tool}</strong><code>{compact(action.args)}</code>
         <div><button type="button" disabled={action.busy} onClick={() => void confirm(action)}>Confirm</button><button type="button" className="secondary" onClick={() => setPending((current) => current.filter((item) => item.id !== action.id))}>Cancel</button></div>

@@ -207,6 +207,11 @@ func (s *server) confirm(w http.ResponseWriter, r *http.Request) {
 func (s *server) runAgent(ctx context.Context, in mailai.ChatRequest, emit func(mailai.Event)) error {
 	messages := []modelMessage{{Role: "system", Content: systemPrompt(in.Context)}, {Role: "user", Content: in.Prompt}}
 	for turn := 0; turn < 6; turn++ {
+		if turn == 0 {
+			emit(mailai.Event{Type: "status", Text: "Understanding the request and choosing the next step…"})
+		} else {
+			emit(mailai.Event{Type: "status", Text: "Continuing from the latest tool result…"})
+		}
 		msg, err := s.complete(ctx, messages)
 		if err != nil {
 			return err
@@ -220,13 +225,18 @@ func (s *server) runAgent(ctx context.Context, in mailai.ChatRequest, emit func(
 			return nil
 		}
 		for _, call := range msg.ToolCalls {
-			args := json.RawMessage(call.Function.Arguments)
-			if !json.Valid(args) {
-				args = json.RawMessage(`{}`)
+			args, visible, repairNote, validationErr := normalizeToolArguments(call.Function.Name, call.Function.Arguments, in)
+			if repairNote != "" {
+				emit(mailai.Event{Type: "status", Text: repairNote})
 			}
-			var visible any
-			_ = json.Unmarshal(args, &visible)
 			emit(mailai.Event{Type: "tool_call", Tool: call.Function.Name, Arguments: visible})
+			if validationErr != nil {
+				errText := validationErr.Error()
+				emit(mailai.Event{Type: "tool_error", Tool: call.Function.Name, Text: errText})
+				payload, _ := json.Marshal(map[string]any{"error": errText, "recoverable": true})
+				messages = append(messages, modelMessage{Role: "tool", ToolCallID: call.ID, Content: string(payload)})
+				continue
+			}
 			if isSideEffect(call.Function.Name) {
 				token, err := s.signAction(pendingAction{UserID: in.UserID, Name: call.Function.Name, Arguments: args, Expires: time.Now().Add(10 * time.Minute).Unix()})
 				if err != nil {
@@ -238,7 +248,11 @@ func (s *server) runAgent(ctx context.Context, in mailai.ChatRequest, emit func(
 			}
 			result, err := s.callHubTool(ctx, mailai.ToolRequest{UserID: in.UserID, Name: call.Function.Name, Arguments: args})
 			if err != nil {
-				return err
+				errText := safeError(err)
+				emit(mailai.Event{Type: "tool_error", Tool: call.Function.Name, Text: errText})
+				payload, _ := json.Marshal(map[string]any{"error": errText, "recoverable": true})
+				messages = append(messages, modelMessage{Role: "tool", ToolCallID: call.ID, Content: string(payload)})
+				continue
 			}
 			emit(mailai.Event{Type: "tool_result", Tool: call.Function.Name, Result: result.Result})
 			payload, _ := json.Marshal(result)
@@ -246,6 +260,87 @@ func (s *server) runAgent(ctx context.Context, in mailai.ChatRequest, emit func(
 		}
 	}
 	return errors.New("mail-ai reached tool-call limit")
+}
+
+func normalizeToolArguments(name, raw string, in mailai.ChatRequest) (json.RawMessage, any, string, error) {
+	args := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			args = map[string]any{}
+		}
+	}
+	repair := ""
+	setString := func(key, value, note string) {
+		if strings.TrimSpace(asString(args[key])) == "" && strings.TrimSpace(value) != "" {
+			args[key] = strings.TrimSpace(value)
+			if repair == "" {
+				repair = note
+			}
+		}
+	}
+	setInt := func(key string, value int64, note string) {
+		if asInt64(args[key]) <= 0 && value > 0 {
+			args[key] = value
+			if repair == "" {
+				repair = note
+			}
+		}
+	}
+	switch name {
+	case "search_mail":
+		setString("q", in.Prompt, "Search query was missing; repaired it from your request.")
+		if strings.TrimSpace(asString(args["q"])) == "" {
+			return marshalToolArgs(args, repair, errors.New("search_mail requires q"))
+		}
+	case "get_message":
+		setInt("message_id", in.Context.MessageID, "Message ID was missing; using the open message.")
+		if asInt64(args["message_id"]) <= 0 {
+			return marshalToolArgs(args, repair, errors.New("get_message requires message_id"))
+		}
+	case "get_thread":
+		setString("account", in.Context.Account, "Thread scope was incomplete; using the open mail account.")
+		setString("thread_id", in.Context.ThreadID, "Thread scope was incomplete; using the open thread.")
+		if strings.TrimSpace(asString(args["account"])) == "" || strings.TrimSpace(asString(args["thread_id"])) == "" {
+			return marshalToolArgs(args, repair, errors.New("get_thread requires account and thread_id"))
+		}
+	case "draft_reply":
+		setInt("message_id", in.Context.MessageID, "Reply target was missing; using the open message.")
+		if asInt64(args["message_id"]) <= 0 || strings.TrimSpace(asString(args["body"])) == "" {
+			return marshalToolArgs(args, repair, errors.New("draft_reply requires message_id and body"))
+		}
+	case "add_label", "archive_message", "mark_read":
+		setInt("message_id", in.Context.MessageID, "Action target was missing; using the open message.")
+		if asInt64(args["message_id"]) <= 0 {
+			return marshalToolArgs(args, repair, errors.New("message_id is required"))
+		}
+	}
+	return marshalToolArgs(args, repair, nil)
+}
+
+func marshalToolArgs(args map[string]any, repair string, err error) (json.RawMessage, any, string, error) {
+	data, _ := json.Marshal(args)
+	return data, args, repair, err
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	default:
+		return 0
+	}
 }
 
 func systemPrompt(c mailai.CurrentMailContext) string {
