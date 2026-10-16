@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
@@ -252,6 +252,54 @@ function mailMutationDetail(toolName: string, input: Record<string, unknown>, ou
   return TOOL_LABELS[toolName] || toolName;
 }
 
+export type MailAIApprovalRisk = "automatic" | "review" | "high";
+
+const MAIL_AI_AUTOMATIC_TOOLS = new Set(["list_mail", "search_mail", "get_message", "get_thread", "list_mailboxes", "draft_reply", "create_draft"]);
+const MAIL_AI_LOW_RISK_MUTATIONS = new Set(["add_label", "archive_message", "mark_read", "star", "unstar", "move", "snooze", "restore"]);
+const MAIL_AI_HIGH_RISK_ACTIONS = new Set(["trash", "reply_mail", "forward_mail", "send_mail"]);
+
+export function mailAIApprovalRisk(toolName: string): MailAIApprovalRisk {
+  if (MAIL_AI_HIGH_RISK_ACTIONS.has(toolName)) return "high";
+  if (MAIL_AI_LOW_RISK_MUTATIONS.has(toolName)) return "review";
+  if (MAIL_AI_AUTOMATIC_TOOLS.has(toolName)) return "automatic";
+  return "automatic";
+}
+
+type ApprovalPreview = { risk: MailAIApprovalRisk; title: string; detail: string; parameters: Array<[string, string]> };
+
+export function mailAIApprovalPreview(toolName: string, args: unknown): ApprovalPreview {
+  const input = asRecord(args);
+  const risk = mailAIApprovalRisk(toolName);
+  const parameters: Array<[string, string]> = [];
+  const add = (label: string, value: unknown, limit = 220) => {
+    const text = String(value ?? "").trim();
+    if (text) parameters.push([label, compactToolText(text, limit)]);
+  };
+  if (risk === "high") {
+    if (toolName === "trash") {
+      add("邮件", typeof input.message_id === "number" ? `#${input.message_id}` : "当前邮件");
+      add("影响", "移入垃圾箱");
+    } else if (toolName === "reply_mail") {
+      add("邮件", typeof input.message_id === "number" ? `#${input.message_id}` : "当前邮件");
+      add("回复方式", input.reply_all === true ? "回复全部" : "回复发件人");
+      add("正文", input.body);
+    } else if (toolName === "forward_mail") {
+      add("收件人", input.to); add("抄送", input.cc); add("密送", input.bcc);
+      add("正文", input.body);
+      if (input.include_attachments === true) add("附件", "包含原邮件附件");
+    } else if (toolName === "send_mail") {
+      add("收件人", input.to); add("抄送", input.cc); add("密送", input.bcc);
+      add("主题", input.subject); add("正文", input.body);
+    }
+  }
+  return {
+    risk,
+    title: risk === "high" ? "高风险操作 · 必须确认" : risk === "review" ? "邮件变更 · 当前策略需确认" : "自动操作",
+    detail: mailMutationDetail(toolName, input, {}),
+    parameters
+  };
+}
+
 function MutationCard({ toolName, args, result }: { toolName: string; args: unknown; result: unknown }) {
   const input = asRecord(args);
   const output = asRecord(result);
@@ -388,8 +436,7 @@ function ToolCard(props: ToolCallMessagePartProps) {
   const running = status?.type === "running" || result === undefined;
   const pending = approval && approval.approved === undefined && !approval.resolution;
   const kind = mailToolCardKind(toolName);
-  const input = asRecord(args);
-  const approvalDetail = mailMutationDetail(toolName, input, {});
+  const approvalPreview = mailAIApprovalPreview(toolName, args);
   return <section className={`mail-ai-tool-card kind-${kind}${isError ? " error" : ""}`}>
     <div className="mail-ai-tool-title">
       <span className="mail-ai-tool-dot" aria-hidden="true" />
@@ -402,10 +449,15 @@ function ToolCard(props: ToolCallMessagePartProps) {
     {!running && kind === "thread" ? <MailThreadCard result={result} /> : null}
     {!running && kind === "draft" ? <DraftCard result={result} /> : null}
     {!running && kind === "mutation" ? <MutationCard toolName={toolName} args={args} result={result} /> : null}
-    {pending ? <div className="mail-ai-approval">
-      <div><strong>需要确认</strong><span>{approvalDetail}</span>{typeof input.message_id === "number" ? <small>邮件 #{input.message_id}</small> : null}</div>
+    {pending ? <div className={`mail-ai-approval risk-${approvalPreview.risk}`}>
       <div>
-        <button type="button" onClick={() => void respondToApproval({ approved: true })}>允许执行</button>
+        <strong>{approvalPreview.title}</strong>
+        <span>{approvalPreview.detail}</span>
+        {approvalPreview.parameters.length > 0 ? <dl className="mail-ai-approval-params">{approvalPreview.parameters.map(([label, value]) => <Fragment key={`${label}:${value}`}><dt>{label}</dt><dd>{value}</dd></Fragment>)}</dl> : null}
+        {approvalPreview.risk === "high" ? <small>第一阶段禁止 AI 无确认自动执行外发或高影响动作。</small> : null}
+      </div>
+      <div>
+        <button type="button" onClick={() => void respondToApproval({ approved: true })}>{approvalPreview.risk === "high" ? "确认并执行" : "允许执行"}</button>
         <button type="button" className="secondary" onClick={() => void respondToApproval({ approved: false, reason: "User declined" })}>拒绝</button>
       </div>
     </div> : null}

@@ -4,6 +4,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { ToolLoopAgent, createAgentUIStreamResponse, isStepCount, tool } from 'ai';
 import { z } from 'zod';
 import { assertMailAIWorkspaceTools, mailAIWorkspaceInstructions } from './workspace.mjs';
+import { mailAIToolApprovalStatus } from './approval-policy.mjs';
 
 const addr = process.env.MAIL_AI_ADDR || '127.0.0.1:18091';
 const [host, portText] = addr.split(':');
@@ -90,47 +91,47 @@ function createTools({ userID, context, fallbackQuery }) {
       execute: async ({ message_id, body }) => hubTool(userID, 'draft_reply', { message_id: message_id || context.message_id, body }),
     }),
     add_label: tool({
-      description: 'Add a label to a message. This changes mail state and requires user approval.',
+      description: 'Add a label to a message. This is a low-risk mail-state mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), label: z.string().trim().min(1) }),
       execute: async ({ message_id, label }) => hubTool(userID, 'add_label', { message_id: message_id || context.message_id, label }, true),
     }),
     archive_message: tool({
-      description: 'Archive a message. This changes mail state and requires user approval.',
+      description: 'Archive a message. This is a low-risk mail-state mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
       execute: async ({ message_id }) => hubTool(userID, 'archive_message', { message_id: message_id || context.message_id }, true),
     }),
     mark_read: tool({
-      description: 'Set message read state. This changes mail state and requires user approval.',
+      description: 'Set message read state. This is a low-risk mail-state mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), read: z.boolean() }),
       execute: async ({ message_id, read }) => hubTool(userID, 'mark_read', { message_id: message_id || context.message_id, read }, true),
     }),
     star: tool({
-      description: 'Star a message through Rolltop mail state. Requires user approval.',
+      description: 'Star a message through Rolltop mail state. This is a low-risk mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
       execute: async ({ message_id }) => hubTool(userID, 'star', { message_id: message_id || context.message_id }, true),
     }),
     unstar: tool({
-      description: 'Remove the star from a message through Rolltop mail state. Requires user approval.',
+      description: 'Remove the star from a message through Rolltop mail state. This is a low-risk mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
       execute: async ({ message_id }) => hubTool(userID, 'unstar', { message_id: message_id || context.message_id }, true),
     }),
     move: tool({
-      description: 'Move a message to another mailbox in the same account using Rolltop mail operations. Use list_mailboxes when needed. Requires user approval.',
+      description: 'Move a message to another mailbox in the same account using Rolltop mail operations. Use list_mailboxes when needed. This is a low-risk mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), mailbox: z.string().trim().optional(), mailbox_id: z.number().int().positive().optional() }),
       execute: async ({ message_id, mailbox, mailbox_id }) => hubTool(userID, 'move', { message_id: message_id || context.message_id, ...(mailbox ? { mailbox } : {}), ...(mailbox_id ? { mailbox_id } : {}) }, true),
     }),
     snooze: tool({
-      description: 'Snooze a message until an RFC3339 timestamp. Requires user approval.',
+      description: 'Snooze a message until an RFC3339 timestamp. This is a low-risk mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), until: z.string().trim().min(1) }),
       execute: async ({ message_id, until }) => hubTool(userID, 'snooze', { message_id: message_id || context.message_id, until }, true),
     }),
     trash: tool({
-      description: 'Move a message to Trash using the account/provider capability. Requires user approval.',
+      description: 'Move a message to Trash using the account/provider capability. This is a high-impact action and always requires explicit user approval immediately before execution.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
       execute: async ({ message_id }) => hubTool(userID, 'trash', { message_id: message_id || context.message_id }, true),
     }),
     restore: tool({
-      description: 'Restore a trashed message to Inbox using the account/provider capability. Requires user approval.',
+      description: 'Restore a trashed message to Inbox using the account/provider capability. This is a low-risk mutation governed by the Mail AI approval policy.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
       execute: async ({ message_id }) => hubTool(userID, 'restore', { message_id: message_id || context.message_id }, true),
     }),
@@ -171,11 +172,7 @@ function createAgent(body) {
     stopWhen: isStepCount(6),
     instructions: mailAIWorkspaceInstructions(context),
     tools,
-    toolApproval: {
-      add_label: 'user-approval', archive_message: 'user-approval', mark_read: 'user-approval',
-      star: 'user-approval', unstar: 'user-approval', move: 'user-approval', snooze: 'user-approval',
-      trash: 'user-approval', restore: 'user-approval', reply_mail: 'user-approval', forward_mail: 'user-approval', send_mail: 'user-approval',
-    },
+    toolApproval: ({ toolCall }) => mailAIToolApprovalStatus(toolCall.toolName),
   });
 }
 async function sendWebResponse(webResponse, res) {

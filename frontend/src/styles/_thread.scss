@@ -1233,3 +1233,11 @@
   .mail-ai-selection-toolbar { flex-wrap: wrap; }
   .mail-ai-selection-toolbar > span { flex-basis: 100%; }
 }
+
+/* Mail AI A10: risk-tiered approval. High-risk cards surface execution parameters before consent. */
+.mail-ai-approval.risk-high { padding: 9px; border: 1px solid var(--danger); border-radius: 9px; background: var(--surface); }
+.mail-ai-approval.risk-review { padding: 9px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); }
+.mail-ai-approval-params { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; margin: 5px 0 2px; font-size: .72rem; }
+.mail-ai-approval-params dt { color: var(--muted); }
+.mail-ai-approval-params dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.mail-ai-approval.risk-high > div:last-child button:first-child { font-weight: 700; }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mailAIToolApprovalStatus, mailAIToolRisk } from './approval-policy.mjs';
 import {
   MAIL_AI_WORKSPACE_TOOLS,
   assertMailAIWorkspaceTools,
@@ -24,5 +25,23 @@ test('Agent Workspace requires the complete mail tool catalog', () => {
 test('Agent Workspace exposes the complete A9 mail action catalog', () => {
   for (const name of ['star', 'unstar', 'move', 'snooze', 'trash', 'restore', 'create_draft', 'reply_mail', 'forward_mail', 'send_mail']) {
     assert.ok(MAIL_AI_WORKSPACE_TOOLS.includes(name), `missing A9 tool ${name}`);
+  }
+});
+
+
+test('A10 risk-tiered approval policy is conservative by default', () => {
+  for (const name of ['list_mail', 'search_mail', 'get_message', 'get_thread', 'list_mailboxes', 'draft_reply', 'create_draft']) {
+    assert.equal(mailAIToolRisk(name), 'automatic');
+    assert.equal(mailAIToolApprovalStatus(name), undefined);
+  }
+  for (const name of ['star', 'unstar', 'move', 'snooze', 'restore', 'add_label', 'archive_message', 'mark_read']) {
+    assert.equal(mailAIToolRisk(name), 'review');
+    assert.equal(mailAIToolApprovalStatus(name), 'user-approval');
+    assert.equal(mailAIToolApprovalStatus(name, 'automatic'), undefined);
+  }
+  for (const name of ['trash', 'reply_mail', 'forward_mail', 'send_mail']) {
+    assert.equal(mailAIToolRisk(name), 'high');
+    assert.equal(mailAIToolApprovalStatus(name), 'user-approval');
+    assert.equal(mailAIToolApprovalStatus(name, 'automatic'), 'user-approval');
   }
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailAIScopeLabel, mailAIFollowUpPrompts, mailAISelectionPrompt, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, latestAssistantVisibleText, mailAIWorkflowTimeline, mailAITimelinePhase, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
+import { mailAIScopeLabel, mailAIApprovalPreview, mailAIApprovalRisk, mailAIFollowUpPrompts, mailAISelectionPrompt, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, latestAssistantVisibleText, mailAIWorkflowTimeline, mailAITimelinePhase, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
 
 describe("MailSideChat tool activity", () => {
   it("shows useful mail-search progress instead of raw tool JSON", () => {
@@ -70,6 +70,26 @@ describe("MailSideChat tool activity", () => {
       "把当前线程的待办、负责人和截止时间整理成清单"
     ]);
     expect(mailAIFollowUpPrompts("message", "assistant: 已完成总结")).toHaveLength(3);
+  });
+
+  it("renders A10 risk tiers and key parameters before high-risk execution", () => {
+    expect(mailAIApprovalRisk("search_mail")).toBe("automatic");
+    expect(mailAIApprovalRisk("create_draft")).toBe("automatic");
+    expect(mailAIApprovalRisk("star")).toBe("review");
+    expect(mailAIApprovalRisk("trash")).toBe("high");
+    expect(mailAIApprovalRisk("reply_mail")).toBe("high");
+    expect(mailAIApprovalRisk("forward_mail")).toBe("high");
+    expect(mailAIApprovalRisk("send_mail")).toBe("high");
+
+    const send = mailAIApprovalPreview("send_mail", { to: "alice@example.test", cc: "bob@example.test", subject: "Decision", body: "Please confirm by Friday." });
+    expect(send.title).toContain("必须确认");
+    expect(send.parameters).toEqual(expect.arrayContaining([["收件人", "alice@example.test"], ["主题", "Decision"], ["正文", "Please confirm by Friday."]]));
+    const reply = mailAIApprovalPreview("reply_mail", { message_id: 42, reply_all: true, body: "Agreed." });
+    expect(reply.parameters).toEqual(expect.arrayContaining([["邮件", "#42"], ["回复方式", "回复全部"], ["正文", "Agreed."]]));
+    const forward = mailAIApprovalPreview("forward_mail", { message_id: 42, to: "team@example.test", body: "FYI", include_attachments: true });
+    expect(forward.parameters).toEqual(expect.arrayContaining([["收件人", "team@example.test"], ["正文", "FYI"], ["附件", "包含原邮件附件"]]));
+    const trash = mailAIApprovalPreview("trash", { message_id: 42 });
+    expect(trash.parameters).toEqual(expect.arrayContaining([["邮件", "#42"], ["影响", "移入垃圾箱"]]));
   });
 
   it("turns a selected mail quote into explicit AI context without sending mail", () => {

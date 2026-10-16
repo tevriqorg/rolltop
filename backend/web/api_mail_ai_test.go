@@ -192,6 +192,12 @@ func TestMailAIToolsAreServerAuthenticatedTenantScopedAndConfirmMutations(t *tes
 		t.Fatalf("snooze=%+v err=%v want=%s", snooze, err, until)
 	}
 
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "trash", Arguments: messageArg}); w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed trash=%d %s", w.Code, w.Body.String())
+	}
+	if trashed, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{View: "trash"}); len(trashed) != 0 {
+		t.Fatal("trash mutated without explicit confirmation")
+	}
 	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "trash", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
 		t.Fatalf("confirmed trash=%d %s", w.Code, w.Body.String())
 	}
@@ -302,6 +308,9 @@ func TestMailAIReplyAndForwardUseRolltopComposePipeline(t *testing.T) {
 	}
 
 	forwardArgs, _ := json.Marshal(map[string]any{"message_id": incoming.ID, "to": "forward@example.test", "body": "FYI from AI"})
+	if _, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "forward_mail", Arguments: forwardArgs}); status != http.StatusConflict || err == nil {
+		t.Fatalf("unconfirmed forward status=%d err=%v", status, err)
+	}
 	forwarded, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "forward_mail", Arguments: forwardArgs, Confirmed: true})
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("forward status=%d err=%v response=%+v", status, err, forwarded)
