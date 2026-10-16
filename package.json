@@ -21,7 +21,7 @@
     "android:build": "./android/gradlew -p android :app:assembleDebug",
     "build:carddav-sync-css": "mkdir -p plugins/carddav_sync/frontend_dist && sass plugins/carddav_sync/frontend/styles.css plugins/carddav_sync/frontend_dist/styles.css --style=compressed",
     "privacy:check": "node .github/scripts/privacy-boundary-check.mjs",
-    "workspace:test": "node --test tools/mail-ai-agent/workspace.test.mjs"
+    "workspace:test": "node --test tools/mail-ai-agent/*.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.69",

@@ -7,6 +7,7 @@ import { ToolLoopAgent, createAgentUIStreamResponse, isStepCount, tool } from 'a
 import { z } from 'zod';
 import { assertMailAIWorkspaceTools, mailAIWorkspaceInstructions } from './workspace.mjs';
 import { mailAIToolApprovalStatus } from './approval-policy.mjs';
+import { nextModelConfig, normalizeModelConfigValues } from './model-config.mjs';
 
 const addr = process.env.MAIL_AI_ADDR || '127.0.0.1:18091';
 const [host, portText] = addr.split(':');
@@ -225,17 +226,6 @@ async function sendWebResponse(webResponse, res) {
   Readable.fromWeb(webResponse.body).pipe(res);
 }
 
-function normalizeConfigValues(baseURL, model) {
-  const normalizedURL = String(baseURL || '').replace(/\/$/, '').trim();
-  const normalizedModel = String(model || '').trim();
-  if (!normalizedURL || !normalizedModel) throw new Error('base_url and model are required');
-  const parsed = new URL(normalizedURL);
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('base_url must be an absolute http(s) URL without credentials, query, or fragment');
-  }
-  return { baseURL: normalizedURL, model: normalizedModel };
-}
-
 async function probeConfig(candidate, timeoutMs = 4000) {
   const headers = candidate.apiKey ? { authorization: `Bearer ${candidate.apiKey}` } : {};
   const response = await fetch(`${candidate.baseURL}/models`, { headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
@@ -259,7 +249,7 @@ async function loadPersistedConfig() {
   if (!modelConfigFile) return;
   try {
     const stored = JSON.parse(await readFile(modelConfigFile, 'utf8'));
-    const normalized = normalizeConfigValues(stored.base_url, stored.model);
+    const normalized = normalizeModelConfigValues(stored.base_url, stored.model);
     modelConfig = { ...normalized, apiKey: String(stored.api_key || '') };
     modelHealth = 'unknown';
   } catch (error) {
@@ -268,8 +258,7 @@ async function loadPersistedConfig() {
 }
 
 async function validateConfig(next) {
-  const normalized = normalizeConfigValues(next.base_url, next.model);
-  const candidate = { ...normalized, apiKey: next.clear_api_key ? '' : String(next.api_key ?? modelConfig.apiKey ?? '') };
+  const candidate = nextModelConfig(modelConfig, next);
   await probeConfig(candidate);
   await persistConfig(candidate);
   modelConfig = candidate;
