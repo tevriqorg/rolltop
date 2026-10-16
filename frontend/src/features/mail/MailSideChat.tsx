@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActionBarPrimitive,
   AssistantRuntimeProvider,
   ComposerPrimitive,
   MessagePrimitive,
+  SuggestionPrimitive,
   ThreadPrimitive,
+  createSuggestionAdapter,
   type TextMessagePartProps,
   type ToolCallMessagePartProps
 } from "@assistant-ui/react";
@@ -219,6 +222,35 @@ function timelineEvidenceIDs(event: TraceEvent) {
   }).filter(Boolean);
 }
 
+export function mailAIFollowUpPrompts(scope: ThreadScope, transcript: string) {
+  const text = transcript.toLowerCase();
+  const prompts: string[] = [];
+  const add = (value: string) => { if (!prompts.includes(value)) prompts.push(value); };
+
+  if (/草稿|回复|draft|reply/.test(text)) {
+    add("把这封回复改得更简洁、明确，并保留关键事实");
+    add("检查这封回复有没有遗漏需要回应的问题或承诺");
+  }
+  if (/截止|待办|风险|deadline|action item|risk/.test(text)) {
+    add("按优先级整理待办，并标出最晚处理时间");
+    add("继续查相关邮件，看看有没有冲突、变更或遗漏");
+  }
+  if (/搜索|找到|邮件|search|found|message/.test(text)) {
+    add("打开最相关的邮件线程，整理关键事实和下一步");
+  }
+
+  if (scope === "global") {
+    add("找出现在最需要我回复的邮件，并按优先级排序");
+    add("汇总未来 7 天的截止事项、负责人和风险");
+    add("检查不同邮箱里有没有相互冲突的信息或安排");
+  } else {
+    add("把当前线程的待办、负责人和截止时间整理成清单");
+    add("结合其他邮箱里的相关邮件，检查有没有冲突或遗漏");
+    add("根据当前线程帮我起草一封下一步回复");
+  }
+  return prompts.slice(0, 3);
+}
+
 export function latestAssistantVisibleText(messages: UIMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -325,13 +357,31 @@ function ToolCard(props: ToolCallMessagePartProps) {
 
 function UserMessage() {
   return <MessagePrimitive.Root className="mail-ai-message user">
-    <MessagePrimitive.Parts components={{ Text: UserTextPart }} />
+    <ComposerPrimitive.If editing={false}>
+      <MessagePrimitive.Parts components={{ Text: UserTextPart }} />
+      <ActionBarPrimitive.Root className="mail-ai-action-bar" hideWhenRunning>
+        <ActionBarPrimitive.Edit aria-label="编辑已发问题">编辑</ActionBarPrimitive.Edit>
+      </ActionBarPrimitive.Root>
+    </ComposerPrimitive.If>
+    <ComposerPrimitive.If editing>
+      <ComposerPrimitive.Root className="mail-ai-edit-composer">
+        <ComposerPrimitive.Input aria-label="编辑已发问题" rows={3} />
+        <div className="mail-ai-composer-actions">
+          <ComposerPrimitive.Cancel>取消</ComposerPrimitive.Cancel>
+          <ComposerPrimitive.Send>重新发送</ComposerPrimitive.Send>
+        </div>
+      </ComposerPrimitive.Root>
+    </ComposerPrimitive.If>
   </MessagePrimitive.Root>;
 }
 
 function AssistantMessage() {
   return <MessagePrimitive.Root className="mail-ai-message assistant">
     <MessagePrimitive.Parts components={{ Text: AssistantMarkdownPart, Reasoning: () => <div className="mail-ai-thinking">正在分析…</div>, tools: { Fallback: ToolCard } }} />
+    <ActionBarPrimitive.Root className="mail-ai-action-bar" hideWhenRunning>
+      <ActionBarPrimitive.Copy aria-label="复制回答">复制</ActionBarPrimitive.Copy>
+      <ActionBarPrimitive.Reload aria-label="重新执行">重试</ActionBarPrimitive.Reload>
+    </ActionBarPrimitive.Root>
   </MessagePrimitive.Root>;
 }
 
@@ -340,6 +390,11 @@ function AssistantThread({ empty }: { empty: boolean }) {
     <ThreadPrimitive.Viewport className="mail-ai-assistant-viewport">
       {empty ? <div className="mail-ai-empty">可以搜索三个邮箱、阅读线程、总结邮件或起草回复。工具执行过程会显示在这里。</div> : null}
       <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+      <div className="mail-ai-suggestions" aria-label="Mail AI follow-up suggestions">
+        <ThreadPrimitive.Suggestions>
+          {({ suggestion }) => <SuggestionPrimitive.Trigger send>{suggestion.prompt}</SuggestionPrimitive.Trigger>}
+        </ThreadPrimitive.Suggestions>
+      </div>
       <ThreadPrimitive.ViewportFooter className="mail-ai-assistant-footer">
         <ComposerPrimitive.Root className="mail-ai-composer">
           <ComposerPrimitive.Input placeholder="问这封邮件，或搜索全部邮箱…" rows={3} />
@@ -351,6 +406,12 @@ function AssistantThread({ empty }: { empty: boolean }) {
 }
 
 function MailSideChatRuntime({ csrf, thread, onPersisted }: { csrf: string; thread: ThreadSnapshot; onPersisted: () => void }) {
+  const suggestionAdapter = useMemo(() => createSuggestionAdapter({
+    key: `mail-a7:${thread.scope}`,
+    count: 3,
+    maxMessages: 6,
+    complete: async ({ prompt, signal }) => signal?.aborted ? [] : mailAIFollowUpPrompts(thread.scope, prompt)
+  }), [thread.scope]);
   const transport = useMemo(() => new AssistantChatTransport({
     api: "/api/mail-ai/agent",
     headers: { "X-CSRF-Token": csrf },
@@ -359,6 +420,7 @@ function MailSideChatRuntime({ csrf, thread, onPersisted }: { csrf: string; thre
   const runtime = useChatRuntime<UIMessage>({
     messages: thread.messages,
     transport,
+    adapters: { suggestion: suggestionAdapter },
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onFinish: ({ messages, isAbort, isDisconnect, isError }) => {
       if (isAbort || isDisconnect || isError) return;

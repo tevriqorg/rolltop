@@ -1126,6 +1126,11 @@
 .mail-ai-action-bar button, .mail-ai-branch-picker button { min-height: 28px; padding: 3px 7px; border: 0; background: transparent; color: var(--muted); font-size: .72rem; }
 .mail-ai-action-bar button:hover:not(:disabled), .mail-ai-branch-picker button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .mail-ai-branch-picker span { color: var(--muted); font-size: .72rem; }
+.mail-ai-edit-composer { display: grid; gap: 8px; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.mail-ai-edit-composer textarea { width: 100%; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.mail-ai-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.mail-ai-suggestions button { border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); padding: 6px 9px; font-size: .76rem; text-align: left; }
+.mail-ai-suggestions button:hover:not(:disabled) { background: var(--hover); }
 .mail-ai-thinking { color: var(--muted); font-size: .78rem; padding: 4px 0; }
 
 .mail-ai-tool-card { margin: 7px 0; border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; background: var(--surface-subtle); }

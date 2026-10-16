@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailAIScopeLabel, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, latestAssistantVisibleText, mailAIWorkflowTimeline, mailAITimelinePhase, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
+import { mailAIScopeLabel, mailAIFollowUpPrompts, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, latestAssistantVisibleText, mailAIWorkflowTimeline, mailAITimelinePhase, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
 
 describe("MailSideChat tool activity", () => {
   it("shows useful mail-search progress instead of raw tool JSON", () => {
@@ -51,6 +51,20 @@ describe("MailSideChat tool activity", () => {
     const timeline = mailAIWorkflowTimeline(events, messages);
     expect(timeline.map((item) => item.phase)).toEqual(["浏览", "读取", "读取", "比较", "动作", "结论"]);
     expect(timeline.map((item) => item.detail).join(" ")).not.toContain("secret");
+  });
+
+  it("offers contextual high-value follow-up suggestions after an answer", () => {
+    expect(mailAIFollowUpPrompts("global", "assistant: 找到了三封邮件，其中两封有截止日期和风险")).toEqual([
+      "按优先级整理待办，并标出最晚处理时间",
+      "继续查相关邮件，看看有没有冲突、变更或遗漏",
+      "打开最相关的邮件线程，整理关键事实和下一步"
+    ]);
+    expect(mailAIFollowUpPrompts("mail_thread", "assistant: 我已经起草了一封回复")).toEqual([
+      "把这封回复改得更简洁、明确，并保留关键事实",
+      "检查这封回复有没有遗漏需要回应的问题或承诺",
+      "把当前线程的待办、负责人和截止时间整理成清单"
+    ]);
+    expect(mailAIFollowUpPrompts("message", "assistant: 已完成总结")).toHaveLength(3);
   });
 
   it("summarizes auditable trace results without requiring reasoning text", () => {
