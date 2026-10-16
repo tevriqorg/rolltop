@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
+	"strings"
 
 	"rolltop/backend/blob"
 	"rolltop/backend/evidence"
@@ -23,20 +25,44 @@ type Service struct {
 	Search *search.Service
 }
 
-func (s Service) Source(ctx context.Context, a provider.Account) (provider.MockMailbox, error) {
+type mockSource interface {
+	provider.MailProvider
+	Snapshot(context.Context) ([]provider.Message, error)
+	Mutate(context.Context, provider.Mutation) error
+	Census(context.Context, provider.Account) (provider.Census, error)
+}
+
+func Accounts(userID int64) []provider.Account {
+	if strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")) != "" {
+		return []provider.Account{
+			{UserID: userID, ID: "personal", Provider: provider.Mock},
+			{UserID: userID, ID: "work", Provider: provider.Mock},
+			{UserID: userID, ID: "travel", Provider: provider.Mock},
+		}
+	}
+	return provider.MockAccounts(userID)
+}
+
+func (s Service) Source(ctx context.Context, a provider.Account) (mockSource, error) {
+	if base := strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")); base != "" {
+		if a.ID != "personal" && a.ID != "work" && a.ID != "travel" {
+			return nil, errors.New("unknown remote mock account")
+		}
+		return provider.RemoteMockMailbox{Account: a, BaseURL: strings.TrimRight(base, "/") + "/accounts/" + a.ID}, nil
+	}
 	p := provider.MockMailbox{Account: a}
 	journal, err := s.Store.ProviderJournal(ctx, a.UserID, a.ID)
 	if err != nil {
-		return p, err
+		return &p, err
 	}
 	for _, data := range journal {
 		var change provider.Mutation
 		if err := json.Unmarshal([]byte(data), &change); err != nil {
-			return p, err
+			return &p, err
 		}
 		p.Journal = append(p.Journal, change)
 	}
-	return p, nil
+	return &p, nil
 }
 func (s Service) Mutate(ctx context.Context, a provider.Account, change provider.Mutation) error {
 	if a.Provider != provider.Mock {
@@ -52,19 +78,21 @@ func (s Service) Mutate(ctx context.Context, a provider.Account, change provider
 	if err = p.Mutate(ctx, change); err != nil {
 		return err
 	}
-	data, err := json.Marshal(change)
-	if err != nil {
-		return err
-	}
-	if err = s.Store.AppendProviderMutation(ctx, a.UserID, a.ID, string(data)); err != nil {
-		return err
+	if strings.TrimSpace(os.Getenv("ROLLTOP_MOCK_SOURCE_URL")) == "" {
+		data, err := json.Marshal(change)
+		if err != nil {
+			return err
+		}
+		if err = s.Store.AppendProviderMutation(ctx, a.UserID, a.ID, string(data)); err != nil {
+			return err
+		}
 	}
 	// Source mutation is durable before updating the mirror. A failed projection
 	// leaves the checkpoint unchanged and is replayed by the next Sync.
 	return s.Sync(ctx, a)
 }
 func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
-	if a.Provider != provider.Mock || (a.ID != "personal" && a.ID != "work") || a.UserID <= 0 {
+	if a.Provider != provider.Mock || (a.ID != "personal" && a.ID != "work" && a.ID != "travel") || a.UserID <= 0 {
 		return errors.New("unknown mock account")
 	}
 	if s.Search == nil || s.Blobs == nil {
@@ -82,7 +110,7 @@ func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
 	if err != nil {
 		return err
 	}
-	progress := store.SyncProgress{CurrentMailbox: "Mock " + a.ID}
+	progress := store.SyncProgress{CurrentMailbox: "INBOX"}
 	defer func() {
 		status := "completed"
 		message := ""
@@ -144,7 +172,7 @@ func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
 			return err
 		}
 		ingest := syncer.Service{Store: s.Store, Blobs: s.Blobs, Search: s.Search}
-		msg, err := ingest.StoreSnapshotMessage(ctx, a.UserID, store.MailAccount{ID: source.AccountID, UserID: a.UserID}, store.Mailbox{ID: source.MailboxID, UserID: a.UserID, AccountID: source.AccountID, Name: "Mock mirror", IncludeInSearch: true}, syncer.FetchedMessage{Mailbox: "Mock mirror", UID: slot, Raw: m.Raw, Size: m.Size, Flags: flags, Oversized: m.Oversized})
+		msg, err := ingest.StoreSnapshotMessage(ctx, a.UserID, store.MailAccount{ID: source.AccountID, UserID: a.UserID}, store.Mailbox{ID: source.MailboxID, UserID: a.UserID, AccountID: source.AccountID, Name: "INBOX", Role: "inbox", IncludeInSearch: true}, syncer.FetchedMessage{Mailbox: "INBOX", UID: slot, Raw: m.Raw, Size: m.Size, Flags: flags, Oversized: m.Oversized})
 		if err != nil {
 			return err
 		}

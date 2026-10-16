@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"rolltop/backend/accountconnector"
 	"rolltop/backend/auth"
 	"rolltop/backend/blob"
 	"rolltop/backend/buildinfo"
@@ -74,6 +75,7 @@ type Options struct {
 	MailAIURL         string
 	MailAISharedToken string
 	MailAIHTTPClient  *http.Client
+	GoogleConnector   accountconnector.Connector
 }
 
 // Server owns HTTP handlers, shared services, session settings, event fanout, and lightweight caches.
@@ -138,17 +140,22 @@ type Server struct {
 	// backgroundCtx bounds every fire-and-forget goroutine the server spawns
 	// (bulk read-state pushes and similar). Canceling it at Close stops new
 	// work and lets in-flight iterations exit promptly.
-	backgroundCtx     context.Context
-	backgroundCancel  context.CancelFunc
-	readStatePushes   *readStatePushQueue
-	loginThrottle     *loginThrottle
-	mailDiscovery     mailSettingsDiscoverer
-	dummyVerifyOnce   sync.Once
-	dummyHash         string
-	startedAt         time.Time
-	mailAIURL         string
-	mailAISharedToken string
-	mailAIHTTPClient  *http.Client
+	backgroundCtx      context.Context
+	backgroundCancel   context.CancelFunc
+	readStatePushes    *readStatePushQueue
+	loginThrottle      *loginThrottle
+	mailDiscovery      mailSettingsDiscoverer
+	dummyVerifyOnce    sync.Once
+	dummyHash          string
+	startedAt          time.Time
+	mailAIURL          string
+	mailAISharedToken  string
+	mailAIHTTPClient   *http.Client
+	googleConnector    accountconnector.Connector
+	accountConnectors  accountconnector.Service
+	googleOAuthMu      sync.Mutex
+	googleOAuthPending map[string]googleOAuthPending
+	gmailAPIBaseURL    string
 }
 
 type contextKey string
@@ -366,6 +373,9 @@ func New(opts Options) (*Server, error) {
 		mailAIURL:                 strings.TrimRight(strings.TrimSpace(opts.MailAIURL), "/"),
 		mailAISharedToken:         strings.TrimSpace(opts.MailAISharedToken),
 		mailAIHTTPClient:          opts.MailAIHTTPClient,
+		googleConnector:           opts.GoogleConnector,
+		accountConnectors:         accountconnector.Service{Store: opts.Store, MasterKey: opts.MasterKey},
+		googleOAuthPending:        make(map[string]googleOAuthPending),
 	}
 	if srv.mailAIHTTPClient == nil {
 		srv.mailAIHTTPClient = &http.Client{Timeout: 95 * time.Second}

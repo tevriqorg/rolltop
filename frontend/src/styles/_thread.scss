@@ -1082,3 +1082,205 @@
   .mail-ai-panel { inset: 58px 8px 8px; width: auto; }
   .mail-ai-launch { right: 12px; bottom: 68px; }
 }
+
+
+/* assistant-ui / AI SDK v7 Mail Agent */
+.mail-ai-panel-assistant { padding: 0; gap: 0; overflow: hidden; }
+.mail-ai-close { position: absolute; top: 10px; right: 10px; z-index: 3; }
+.mail-ai-thread { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.mail-ai-runtime-shell { flex: 1; min-height: 0; }
+.mail-ai-assistant-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 44px 10px 14px; border-bottom: 1px solid var(--border); }
+.mail-ai-assistant-header > div { display: grid; gap: 2px; }
+.mail-ai-assistant-header span { color: var(--muted); font-size: .76rem; }
+.mail-ai-assistant-header .mail-ai-header-title { min-width: 0; }
+.mail-ai-assistant-header .mail-ai-header-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.mail-ai-assistant-header .mail-ai-header-actions { display: flex; flex-direction: row; align-items: center; gap: 4px; }
+.mail-ai-header-actions button { min-height: 30px; padding: 4px 8px; font-size: .75rem; }
+.mail-ai-runtime-badge { border: 1px solid var(--border); border-radius: 999px; padding: 3px 7px; background: var(--surface-subtle); }
+.mail-ai-new-menu { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.mail-ai-new-menu > strong { font-size: .76rem; color: var(--muted); }
+.mail-ai-new-menu > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.mail-ai-new-menu button { min-height: 32px; padding: 5px 9px; }
+.mail-ai-history { max-height: min(44vh, 360px); overflow: auto; display: grid; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.mail-ai-history-item { width: 100%; display: grid; gap: 4px; padding: 8px 9px; text-align: left; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); }
+.mail-ai-history-item.active { border-color: var(--active-strong); background: var(--active); }
+.mail-ai-history-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .7rem; color: var(--muted); }
+.mail-ai-history-row strong { color: var(--accent-strong); }
+.mail-ai-history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
+.mail-ai-trace { max-height: min(44vh, 360px); overflow: auto; display: grid; gap: 7px; padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.mail-ai-trace-note { padding: 2px 4px 5px; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.mail-ai-trace-item { display: flex; gap: 8px; align-items: flex-start; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-ai-trace-index { flex: 0 0 auto; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--surface-subtle); color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
+.mail-ai-trace-item > div { min-width: 0; display: grid; gap: 3px; }
+.mail-ai-trace-item strong { font-size: .78rem; overflow-wrap: anywhere; }
+.mail-ai-trace-item > div > span { color: var(--muted); font-size: .72rem; line-height: 1.4; overflow-wrap: anywhere; }
+.mail-ai-error { color: var(--danger); border-bottom: 1px solid var(--border); padding: 8px 12px; }
+.mail-ai-assistant-viewport { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.mail-ai-empty { color: var(--muted); font-size: .82rem; line-height: 1.45; padding: 8px 4px; }
+.mail-ai-message { max-width: 94%; border-radius: 12px; padding: 9px 11px; border: 1px solid var(--border); background: var(--surface-subtle); }
+.mail-ai-message.user { align-self: flex-end; border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.mail-ai-message.assistant { align-self: stretch; max-width: 100%; background: var(--surface); }
+.mail-ai-text { margin: 0; white-space: pre-wrap; line-height: 1.48; overflow-wrap: anywhere; }
+.mail-ai-message-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.mail-ai-action-bar, .mail-ai-branch-picker { display: flex; align-items: center; gap: 4px; }
+.mail-ai-action-bar button, .mail-ai-branch-picker button { min-height: 28px; padding: 3px 7px; border: 0; background: transparent; color: var(--muted); font-size: .72rem; }
+.mail-ai-action-bar button:hover:not(:disabled), .mail-ai-branch-picker button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.mail-ai-branch-picker span { color: var(--muted); font-size: .72rem; }
+.mail-ai-edit-composer { display: grid; gap: 8px; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.mail-ai-edit-composer textarea { width: 100%; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.mail-ai-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.mail-ai-suggestions button { border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); padding: 6px 9px; font-size: .76rem; text-align: left; }
+.mail-ai-suggestions button:hover:not(:disabled) { background: var(--hover); }
+.mail-ai-thinking { color: var(--muted); font-size: .78rem; padding: 4px 0; }
+
+.mail-ai-tool-card { margin: 7px 0; border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; background: var(--surface-subtle); }
+.mail-ai-tool-card.error { border-color: var(--danger); }
+.mail-ai-tool-title { display: flex; gap: 8px; align-items: center; font-size: .8rem; }
+.mail-ai-tool-dot { width: 7px; height: 7px; flex: none; border-radius: 999px; background: var(--accent); }
+.mail-ai-tool-result { max-height: 140px; overflow: auto; white-space: pre-wrap; margin: 8px 0 0; font-size: .73rem; }
+.mail-ai-approval { display: grid; gap: 8px; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border); font-size: .78rem; }
+.mail-ai-approval > div { display: flex; gap: 8px; }
+.mail-ai-assistant-footer { margin-top: auto; position: sticky; bottom: -12px; padding: 10px 0 0; background: linear-gradient(to bottom, transparent, var(--surface) 20%); }
+.mail-ai-composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; border: 1px solid var(--border-strong); border-radius: 12px; padding: 8px; background: var(--surface); }
+.mail-ai-composer textarea { min-height: 64px; max-height: 160px; border: 0; outline: 0; background: transparent; resize: vertical; }
+.mail-ai-composer-actions { display: flex; gap: 6px; align-items: end; }
+.mail-ai-composer button { align-self: end; }
+
+/* Render assistant output as Markdown while keeping user messages plain text. */
+.mail-ai-markdown { line-height: 1.5; overflow-wrap: anywhere; }
+.mail-ai-markdown > :first-child { margin-top: 0; }
+.mail-ai-markdown > :last-child { margin-bottom: 0; }
+.mail-ai-markdown p { margin: 0 0 9px; }
+.mail-ai-markdown h1, .mail-ai-markdown h2, .mail-ai-markdown h3 { margin: 14px 0 7px; font-family: var(--font-ui); line-height: 1.25; }
+.mail-ai-markdown h1 { font-size: 1.12rem; }
+.mail-ai-markdown h2 { font-size: 1.02rem; }
+.mail-ai-markdown h3 { font-size: .94rem; }
+.mail-ai-markdown ul, .mail-ai-markdown ol { margin: 7px 0 10px; padding-left: 22px; }
+.mail-ai-markdown li + li { margin-top: 3px; }
+.mail-ai-markdown blockquote { margin: 9px 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--surface-subtle); color: var(--muted); }
+.mail-ai-markdown code { padding: 1px 4px; border-radius: 4px; background: var(--surface-subtle); font-family: var(--font-mono); font-size: .9em; }
+.mail-ai-markdown pre { max-width: 100%; overflow: auto; margin: 9px 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-ink); color: #f4f1eb; }
+.mail-ai-markdown pre code { padding: 0; background: transparent; color: inherit; }
+.mail-ai-markdown table { display: block; max-width: 100%; overflow-x: auto; margin: 9px 0 12px; font-size: .82rem; }
+.mail-ai-markdown th, .mail-ai-markdown td { padding: 6px 8px; white-space: normal; }
+.mail-ai-markdown a { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Mail AI A5: domain-specific tool cards. Keep raw tool JSON out of the primary UX. */
+.mail-ai-tool-summary { margin-left: auto; color: var(--muted); font-size: .7rem; font-weight: 500; }
+.mail-ai-tool-empty { margin-top: 8px; color: var(--muted); font-size: .76rem; }
+.mail-ai-tool-mail-list { display: grid; gap: 6px; margin-top: 8px; }
+.mail-ai-tool-mail { display: grid; gap: 2px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.mail-ai-tool-mail strong, .mail-ai-tool-message > strong, .mail-ai-tool-draft > strong { font-size: .8rem; line-height: 1.35; }
+.mail-ai-tool-mail span, .mail-ai-tool-message span, .mail-ai-tool-draft > span { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
+.mail-ai-tool-mail p, .mail-ai-tool-message p, .mail-ai-tool-thread p, .mail-ai-tool-draft p { margin: 4px 0 0; font-size: .75rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-ai-tool-message, .mail-ai-tool-draft { display: grid; gap: 6px; margin-top: 8px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.mail-ai-tool-message dl { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 3px 7px; margin: 0; font-size: .7rem; }
+.mail-ai-tool-message dt { color: var(--muted); }
+.mail-ai-tool-message dd { margin: 0; overflow-wrap: anywhere; }
+.mail-ai-tool-thread { display: grid; gap: 6px; margin-top: 8px; }
+.mail-ai-tool-thread-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.mail-ai-tool-thread-head span { color: var(--muted); font-size: .7rem; }
+.mail-ai-tool-thread article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 7px 8px; border-left: 2px solid var(--border); }
+.mail-ai-tool-thread article > span, .mail-ai-tool-thread article > time { font-size: .7rem; color: var(--muted); overflow-wrap: anywhere; }
+.mail-ai-tool-thread article p { grid-column: 1 / -1; }
+.mail-ai-tool-badge { width: fit-content; padding: 2px 6px; border-radius: 999px; background: var(--surface-subtle); border: 1px solid var(--border); }
+.mail-ai-tool-mutation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; margin-top: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: .74rem; }
+.mail-ai-tool-mutation > span:first-of-type { grid-column: 1; color: var(--muted); }
+.mail-ai-tool-mutation .done, .mail-ai-tool-mutation .pending { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.mail-ai-tool-mutation .done { color: var(--accent-strong); }
+.mail-ai-tool-mutation .pending { color: var(--muted); }
+.mail-ai-approval > div:first-child { display: grid; gap: 2px; }
+.mail-ai-approval > div:first-child span, .mail-ai-approval small { color: var(--muted); }
+
+/* Mail AI A6: continuous auditable tool timeline. */
+.mail-ai-timeline .mail-ai-trace-note { display: grid; gap: 2px; }
+.mail-ai-timeline .mail-ai-trace-note strong { color: var(--text); font-size: .76rem; }
+.mail-ai-timeline-item { position: relative; border: 0; background: transparent; padding: 2px 4px; gap: 9px; }
+.mail-ai-timeline-rail { width: 24px; align-self: stretch; display: flex; flex-direction: column; align-items: center; }
+.mail-ai-timeline-rail i { width: 1px; min-height: 20px; flex: 1; background: var(--border); margin-top: 3px; }
+.mail-ai-timeline-item:last-child .mail-ai-timeline-rail i { display: none; }
+.mail-ai-timeline-item > div:last-child { padding: 5px 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-ai-timeline-phase { width: fit-content; padding: 1px 6px; border-radius: 999px; background: var(--surface-subtle); color: var(--muted) !important; font-size: .64rem !important; font-weight: 700; }
+.mail-ai-timeline-item.state-error > div:last-child { border-color: var(--danger); }
+.mail-ai-timeline-item.state-running .mail-ai-trace-index { outline: 2px solid var(--border); }
+
+.email-frame-shell { position: relative; }
+.mail-ai-selection-toolbar {
+  position: sticky;
+  bottom: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg, var(--surface));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+.mail-ai-selection-toolbar > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: .78;
+}
+.mail-ai-selection-toolbar button { white-space: nowrap; }
+@media (max-width: 720px) {
+  .mail-ai-selection-toolbar { flex-wrap: wrap; }
+  .mail-ai-selection-toolbar > span { flex-basis: 100%; }
+}
+
+/* Mail AI A10: risk-tiered approval. High-risk cards surface execution parameters before consent. */
+.mail-ai-approval.risk-high { padding: 9px; border: 1px solid var(--danger); border-radius: 9px; background: var(--surface); }
+.mail-ai-approval.risk-review { padding: 9px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); }
+.mail-ai-approval-params { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; margin: 5px 0 2px; font-size: .72rem; }
+.mail-ai-approval-params dt { color: var(--muted); }
+.mail-ai-approval-params dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.mail-ai-approval.risk-high > div:last-child button:first-child { font-weight: 700; }
+
+
+/* Mail AI v0.3 experience: guidance, controlled generative UI, workbench, model status. */
+.mail-ai-model-config { display: grid; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.mail-ai-model-config > div { display: grid; gap: 2px; }
+.mail-ai-model-config span, .mail-ai-model-config small { color: var(--muted); font-size: .72rem; }
+.mail-ai-model-config form { display: grid; gap: 7px; }
+.mail-ai-model-config label { display: grid; gap: 3px; font-size: .72rem; font-weight: 700; }
+.mail-ai-model-config input { width: 100%; box-sizing: border-box; }
+.mail-ai-generative { display: grid; gap: 7px; margin-top: 8px; padding: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-ai-generative p { margin: 0; color: var(--muted); font-size: .76rem; }
+.mail-ai-generative dl { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 4px 8px; margin: 0; font-size: .74rem; }
+.mail-ai-generative dd { margin: 0; overflow-wrap: anywhere; }
+.mail-ai-generative table { width: 100%; font-size: .72rem; border-collapse: collapse; }
+.mail-ai-generative th, .mail-ai-generative td { padding: 4px 6px; border: 1px solid var(--border); text-align: left; }
+.mail-ai-generative form { display: grid; gap: 5px; }
+.mail-ai-generative form label { display: grid; gap: 2px; font-size: .72rem; }
+.mail-ai-workbench { margin: 10px 12px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-subtle); }
+.mail-ai-workbench > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.mail-ai-workbench > header > div { display: grid; gap: 2px; }
+.mail-ai-workbench > header span { color: var(--muted); font-size: .72rem; }
+.mail-ai-workbench-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+.mail-ai-workbench-grid > section { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-ai-workbench-grid h3 { display: flex; justify-content: space-between; margin: 0 0 6px; font-size: .78rem; }
+.mail-ai-workbench-grid h3 span { color: var(--muted); }
+.mail-ai-workbench-grid article { display: grid; gap: 4px; padding: 7px 0; border-top: 1px solid var(--border); }
+.mail-ai-workbench-grid article:first-of-type { border-top: 0; }
+.mail-ai-workbench-grid article p, .mail-ai-workbench-grid > section > p { margin: 0; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.mail-ai-workbench-grid article time { color: var(--muted); font-size: .68rem; }
+.mail-ai-workbench-grid article > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.mail-guide-layer { position: fixed; inset: 0; z-index: 80; pointer-events: none; }
+.mail-guide-dim { position: absolute; inset: 0; background: rgb(0 0 0 / 32%); }
+.mail-guide-spotlight { position: fixed; z-index: 1; border: 2px solid var(--accent); border-radius: 10px; box-shadow: 0 0 0 9999px rgb(0 0 0 / 24%); background: transparent; }
+.mail-guide-cursor { position: fixed; z-index: 3; font-size: 26px; filter: drop-shadow(0 2px 4px rgb(0 0 0 / 25%)); }
+.mail-guide-bubble { pointer-events: auto; position: fixed; z-index: 4; right: 22px; bottom: 22px; width: min(340px, calc(100vw - 44px)); padding: 14px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-elevated); }
+.mail-guide-head { display: flex; align-items: center; gap: 8px; }
+.mail-guide-head span { margin-left: auto; color: var(--muted); font-size: .72rem; }
+.mail-guide-bubble h3 { margin: 10px 0 4px; }
+.mail-guide-bubble p { margin: 0 0 8px; color: var(--muted); line-height: 1.45; }
+.mail-guide-bubble code { display: inline-block; margin-bottom: 10px; font-size: .72rem; }
+.mail-guide-actions { display: flex; justify-content: flex-end; gap: 6px; }
+@media (max-width: 980px) { .mail-ai-workbench-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 620px) { .mail-ai-workbench-grid { grid-template-columns: 1fr; } .mail-ai-workbench { margin-inline: 8px; } }

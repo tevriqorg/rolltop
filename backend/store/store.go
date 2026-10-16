@@ -37,6 +37,7 @@ type Store struct {
 	pluginDefinitions []plugins.Definition
 	pluginMigrations  []plugins.Migration
 	mu                sync.Mutex
+	userStoreOpenMu   sync.Mutex
 	userStores        map[int64]*Store
 }
 
@@ -165,8 +166,8 @@ func (s *Store) PrepareUserStores(ctx context.Context, progress MigrationReporte
 
 // userStore resolves the SQLite handle for one tenant. The root store owns the
 // cache and the system users table; each child store owns only the user's DB.
-// The double-check around open avoids creating duplicate handles when concurrent
-// requests touch a user for the first time.
+// Keep the cold-open path serialized so concurrent first requests cannot run
+// the same user migrations against one SQLite file at the same time.
 func (s *Store) userStore(ctx context.Context, userID int64, progress MigrationReporter) (*Store, error) {
 	if !s.split || userID == 0 {
 		return s, nil
@@ -177,6 +178,16 @@ func (s *Store) userStore(ctx context.Context, userID int64, progress MigrationR
 		return us, nil
 	}
 	s.mu.Unlock()
+
+	s.userStoreOpenMu.Lock()
+	defer s.userStoreOpenMu.Unlock()
+	s.mu.Lock()
+	if us := s.userStores[userID]; us != nil {
+		s.mu.Unlock()
+		return us, nil
+	}
+	s.mu.Unlock()
+
 	user, err := s.GetUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -198,11 +209,6 @@ func (s *Store) userStore(ctx context.Context, userID int64, progress MigrationR
 		return nil, err
 	}
 	s.mu.Lock()
-	if existing := s.userStores[userID]; existing != nil {
-		s.mu.Unlock()
-		_ = us.Close()
-		return existing, nil
-	}
 	s.userStores[userID] = us
 	s.mu.Unlock()
 	return us, nil

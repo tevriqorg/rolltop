@@ -47,3 +47,18 @@ if (!storageUsable) {
   globalThis.localStorage = shim as unknown as typeof globalThis.localStorage;
   Object.defineProperty(globalThis, "localStorage", { value: shim, configurable: true });
 }
+
+// assistant-ui measures scroll containers with ResizeObserver. jsdom does not
+// implement it, so provide a deterministic no-op observer for DOM test suites.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class TestResizeObserver implements ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    value: TestResizeObserver,
+    configurable: true,
+    writable: true
+  });
+}

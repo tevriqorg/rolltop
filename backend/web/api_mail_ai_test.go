@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rolltop/backend/blob"
 	"rolltop/backend/mailai"
@@ -153,5 +154,412 @@ func TestMailAIToolsAreServerAuthenticatedTenantScopedAndConfirmMutations(t *tes
 	}
 	if got, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{Label: "ai-confirmed"}); len(got) != 1 {
 		t.Fatalf("confirmed label count=%d", len(got))
+	}
+
+	messageArg := json.RawMessage(`{"message_id":` + strconvInt64(messageID) + `}`)
+	beforeStar, err := st.GetMessageForUser(ctx, owner.ID, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "unstar", Arguments: messageArg}); w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed unstar=%d %s", w.Code, w.Body.String())
+	}
+	if row, err := st.GetMessageForUser(ctx, owner.ID, messageID); err != nil || row.IsStarred != beforeStar.IsStarred {
+		t.Fatalf("star state changed without confirmation before=%t row=%+v err=%v", beforeStar.IsStarred, row, err)
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "unstar", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed unstar=%d %s", w.Code, w.Body.String())
+	}
+	if row, err := st.GetMessageForUser(ctx, owner.ID, messageID); err != nil || row.IsStarred {
+		t.Fatalf("confirmed unstar not persisted row=%+v err=%v", row, err)
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "star", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed star=%d %s", w.Code, w.Body.String())
+	}
+	if row, err := st.GetMessageForUser(ctx, owner.ID, messageID); err != nil || !row.IsStarred {
+		t.Fatalf("confirmed star not persisted row=%+v err=%v", row, err)
+	}
+
+	until := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	snoozeArgs, _ := json.Marshal(map[string]any{"message_id": messageID, "until": until.Format(time.RFC3339)})
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "snooze", Arguments: snoozeArgs}); w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed snooze=%d %s", w.Code, w.Body.String())
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "snooze", Arguments: snoozeArgs, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed snooze=%d %s", w.Code, w.Body.String())
+	}
+	if snooze, err := st.MessageSnoozeForUser(ctx, owner.ID, messageID); err != nil || !snooze.SnoozedUntil.Equal(until) {
+		t.Fatalf("snooze=%+v err=%v want=%s", snooze, err, until)
+	}
+
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "trash", Arguments: messageArg}); w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed trash=%d %s", w.Code, w.Body.String())
+	}
+	if trashed, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{View: "trash"}); len(trashed) != 0 {
+		t.Fatal("trash mutated without explicit confirmation")
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "trash", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed trash=%d %s", w.Code, w.Body.String())
+	}
+	if trashed, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{View: "trash"}); len(trashed) == 0 {
+		t.Fatal("trash action did not move the synthetic message into Trash")
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "restore", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed restore=%d %s", w.Code, w.Body.String())
+	}
+	if inbox, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{View: "inbox"}); len(inbox) == 0 {
+		t.Fatal("restore action did not return the synthetic message to Inbox")
+	}
+}
+
+func TestMailAIComposeActionToolsUseRolltopComposeAndApproval(t *testing.T) {
+	ctx := context.Background()
+	server, user, _, _, _ := setupAutocryptComposeTest(t, ctx, false)
+	accounts, err := server.store.ListMailAccountsForUser(ctx, user.ID)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts=%d err=%v", len(accounts), err)
+	}
+	for name, role := range map[string]string{"Sent": "sent", "Drafts": "drafts"} {
+		mailbox, err := server.store.GetOrCreateMailbox(ctx, user.ID, accounts[0].ID, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := server.store.UpdateMailboxSettings(ctx, user.ID, mailbox.ID, store.MailboxSettings{
+			SyncMode: mailbox.SyncMode, Role: role, Icon: mailbox.Icon, ShowInSidebar: true,
+			ShowInAllMail: mailbox.ShowInAllMail, IncludeInSearch: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/mail-ai/tools", nil)
+
+	draftArgs := json.RawMessage(`{"to":"recipient@example.test","subject":"A9 draft","body":"Draft only"}`)
+	draft, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "create_draft", Arguments: draftArgs})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("create_draft status=%d err=%v response=%+v", status, err, draft)
+	}
+	draftResult, ok := draft.Result.(map[string]any)
+	if !ok || draftResult["send"] != false || draftResult["message_id"] == nil {
+		t.Fatalf("create_draft result=%+v", draft.Result)
+	}
+
+	sendArgs := json.RawMessage(`{"to":"recipient@example.test","subject":"A9 send","body":"Approved send"}`)
+	if _, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "send_mail", Arguments: sendArgs}); status != http.StatusConflict || err == nil {
+		t.Fatalf("unconfirmed send status=%d err=%v", status, err)
+	}
+	sent, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "send_mail", Arguments: sendArgs, Confirmed: true})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("confirmed send status=%d err=%v response=%+v", status, err, sent)
+	}
+	sentResult, ok := sent.Result.(map[string]any)
+	if !ok || sentResult["queued"] != true || sentResult["send_id"] == nil {
+		t.Fatalf("confirmed send did not enter Rolltop outbox: %+v", sent.Result)
+	}
+}
+
+func TestMailAIReplyAndForwardUseRolltopComposePipeline(t *testing.T) {
+	ctx := context.Background()
+	server, user, _, _, _ := setupAutocryptComposeTest(t, ctx, false)
+	accounts, err := server.store.ListMailAccountsForUser(ctx, user.ID)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts=%d err=%v", len(accounts), err)
+	}
+	inbox, err := server.store.GetOrCreateMailbox(ctx, user.ID, accounts[0].ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("From: Sender <sender@example.test>\r\nTo: Me <me@example.test>\r\nSubject: A9 source\r\nMessage-ID: <a9-incoming@example.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOriginal A9 body\r\n")
+	saved, err := server.blobs.SaveRawMessage(user.ID, accounts[0].ID, "INBOX", 91, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobRec, err := server.store.CreateBlob(ctx, store.BlobRecord{
+		UserID: user.ID, Kind: "message", Path: saved.Path, SHA256: saved.SHA256, Size: saved.Size,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := server.store.CreateMessage(ctx, store.CreateMessage{
+		UserID: user.ID, AccountID: accounts[0].ID, MailboxID: inbox.ID, BlobID: blobRec.ID, BlobPath: blobRec.Path,
+		MessageIDHeader: "<a9-incoming@example.test>", Subject: "A9 source",
+		FromAddr: "Sender <sender@example.test>", ToAddr: "Me <me@example.test>",
+		Date: time.Now().UTC(), InternalDate: time.Now().UTC(), UID: 91,
+		BodyText: "Original A9 body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/mail-ai/tools", nil)
+	replyArgs, _ := json.Marshal(map[string]any{"message_id": incoming.ID, "body": "AI reply body"})
+	if _, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "reply_mail", Arguments: replyArgs}); status != http.StatusConflict || err == nil {
+		t.Fatalf("unconfirmed reply status=%d err=%v", status, err)
+	}
+	reply, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "reply_mail", Arguments: replyArgs, Confirmed: true})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("confirmed reply status=%d err=%v response=%+v", status, err, reply)
+	}
+	replyResult := reply.Result.(map[string]any)
+	replyMessage, err := server.store.GetMessageForUser(ctx, user.ID, replyResult["message_id"].(int64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replyMessage.InReplyTo != incoming.MessageIDHeader || !strings.Contains(replyMessage.ToAddr, "sender@example.test") || !strings.Contains(replyMessage.BodyText, "AI reply body") {
+		t.Fatalf("reply did not preserve Rolltop threading/recipient/body: %+v", replyMessage)
+	}
+
+	forwardArgs, _ := json.Marshal(map[string]any{"message_id": incoming.ID, "to": "forward@example.test", "body": "FYI from AI"})
+	if _, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "forward_mail", Arguments: forwardArgs}); status != http.StatusConflict || err == nil {
+		t.Fatalf("unconfirmed forward status=%d err=%v", status, err)
+	}
+	forwarded, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "forward_mail", Arguments: forwardArgs, Confirmed: true})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("forward status=%d err=%v response=%+v", status, err, forwarded)
+	}
+	forwardResult := forwarded.Result.(map[string]any)
+	forwardMessage, err := server.store.GetMessageForUser(ctx, user.ID, forwardResult["message_id"].(int64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(forwardMessage.ToAddr, "forward@example.test") || !strings.HasPrefix(forwardMessage.Subject, "Fwd:") || !strings.Contains(forwardMessage.BodyText, "FYI from AI") {
+		t.Fatalf("forward did not preserve Rolltop compose semantics: %+v", forwardMessage)
+	}
+}
+
+func TestMailAIThreadEndpointPersistsVisibleMessagesAndRejectsCrossTenantWrite(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner, err := st.CreateUser(ctx, "thread-owner@example.invalid", "Owner", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateUser(ctx, "thread-other@example.invalid", "Other", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st}
+
+	getThread := func(user store.User) map[string]json.RawMessage {
+		r := httptest.NewRequest(http.MethodGet, "/api/mail-ai/thread", nil)
+		r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: user}))
+		w := httptest.NewRecorder()
+		s.handleAPI(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET thread=%d %s", w.Code, w.Body.String())
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	ownerThread := getThread(owner)
+	var threadID string
+	if err := json.Unmarshal(ownerThread["thread_id"], &threadID); err != nil || threadID == "" {
+		t.Fatalf("thread id=%q err=%v", threadID, err)
+	}
+	putBody := `{"thread_id":"` + threadID + `","messages":[` +
+		`{"id":"u1","role":"user","parts":[{"type":"text","text":"hello"}]},` +
+		`{"id":"a1","role":"assistant","parts":[{"type":"reasoning","text":"private chain"},{"type":"text","text":"visible answer"},{"type":"tool-search_mail","toolCallId":"t1","state":"output-available","input":{"q":"x"},"output":[1]}]}` +
+		`]}`
+	put := httptest.NewRequest(http.MethodPut, "/api/mail-ai/thread", strings.NewReader(putBody))
+	put = put.WithContext(context.WithValue(put.Context(), userContextKey, currentUser{User: owner}))
+	put.AddCookie(&http.Cookie{Name: csrfCookie, Value: "thread-csrf"})
+	put.Header.Set("X-CSRF-Token", s.csrfForBase("thread-csrf"))
+	pw := httptest.NewRecorder()
+	s.handleAPI(pw, put)
+	if pw.Code != http.StatusOK {
+		t.Fatalf("PUT thread=%d %s", pw.Code, pw.Body.String())
+	}
+
+	restored := getThread(owner)
+	var messages []json.RawMessage
+	if err := json.Unmarshal(restored["messages"], &messages); err != nil || len(messages) != 2 {
+		t.Fatalf("restored messages=%d err=%v body=%s", len(messages), err, restored["messages"])
+	}
+	if strings.Contains(string(messages[1]), "private chain") || strings.Contains(string(messages[1]), `"type":"reasoning"`) {
+		t.Fatalf("private reasoning persisted: %s", messages[1])
+	}
+	if !strings.Contains(string(messages[1]), "visible answer") || !strings.Contains(string(messages[1]), "tool-search_mail") {
+		t.Fatalf("visible/tool result missing: %s", messages[1])
+	}
+
+	trace := httptest.NewRequest(http.MethodGet, "/api/mail-ai/trace?thread_id="+threadID, nil)
+	trace = trace.WithContext(context.WithValue(trace.Context(), userContextKey, currentUser{User: owner}))
+	tw := httptest.NewRecorder()
+	s.handleAPI(tw, trace)
+	if tw.Code != http.StatusOK {
+		t.Fatalf("GET trace=%d %s", tw.Code, tw.Body.String())
+	}
+	if strings.Contains(tw.Body.String(), "private chain") || strings.Contains(tw.Body.String(), "reasoning") {
+		t.Fatalf("private reasoning leaked in trace: %s", tw.Body.String())
+	}
+	if !strings.Contains(tw.Body.String(), `"tool_name":"search_mail"`) || !strings.Contains(tw.Body.String(), `"state":"output-available"`) || !strings.Contains(tw.Body.String(), `"q":"x"`) {
+		t.Fatalf("persisted tool trace missing: %s", tw.Body.String())
+	}
+
+	crossTrace := httptest.NewRequest(http.MethodGet, "/api/mail-ai/trace?thread_id="+threadID, nil)
+	crossTrace = crossTrace.WithContext(context.WithValue(crossTrace.Context(), userContextKey, currentUser{User: other}))
+	ctw := httptest.NewRecorder()
+	s.handleAPI(ctw, crossTrace)
+	if ctw.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant trace=%d %s", ctw.Code, ctw.Body.String())
+	}
+
+	cross := httptest.NewRequest(http.MethodPut, "/api/mail-ai/thread", strings.NewReader(putBody))
+	cross = cross.WithContext(context.WithValue(cross.Context(), userContextKey, currentUser{User: other}))
+	cross.AddCookie(&http.Cookie{Name: csrfCookie, Value: "thread-csrf"})
+	cross.Header.Set("X-CSRF-Token", s.csrfForBase("thread-csrf"))
+	cw := httptest.NewRecorder()
+	s.handleAPI(cw, cross)
+	if cw.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant PUT=%d %s", cw.Code, cw.Body.String())
+	}
+}
+
+func TestMailAIMessageSnapshotsStripReasoningParts(t *testing.T) {
+	raw := []json.RawMessage{json.RawMessage(`{"id":"a1","role":"assistant","parts":[{"type":"reasoning","text":"secret"},{"type":"reasoning-start","id":"r1"},{"type":"text","text":"public"}]}`)}
+	messages, err := mailAIMessageSnapshots(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || strings.Contains(string(messages[0].Payload), "secret") || strings.Contains(string(messages[0].Payload), "reasoning-start") || !strings.Contains(string(messages[0].Payload), "public") {
+		t.Fatalf("sanitized message=%s", messages[0].Payload)
+	}
+}
+
+func TestMailAIAgentPersistsRequestSnapshotBeforeProxy(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner, err := st.CreateUser(ctx, "agent-persist@example.invalid", "Owner", "hash", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, err := st.CurrentMailAIThreadForUser(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent" {
+			t.Fatalf("sidecar path=%q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: ok\n\n"))
+	}))
+	defer sidecar.Close()
+	s := &Server{store: st, mailAIURL: sidecar.URL, mailAISharedToken: "persist-secret", mailAIHTTPClient: sidecar.Client()}
+	body := `{"id":"sdk-ephemeral","thread_id":"` + thread.ID + `","messages":[{"id":"u1","role":"user","parts":[{"type":"text","text":"persist me"}]}]}`
+	r := httptest.NewRequest(http.MethodPost, "/api/mail-ai/agent", strings.NewReader(body))
+	r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: owner}))
+	r.AddCookie(&http.Cookie{Name: csrfCookie, Value: "agent-csrf"})
+	r.Header.Set("X-CSRF-Token", s.csrfForBase("agent-csrf"))
+	w := httptest.NewRecorder()
+	s.handleAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("agent=%d %s", w.Code, w.Body.String())
+	}
+	restored, err := st.CurrentMailAIThreadForUser(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Messages) != 1 || !strings.Contains(string(restored.Messages[0]), "persist me") {
+		t.Fatalf("agent request snapshot not persisted: %s", restored.Messages)
+	}
+}
+
+func TestMailAIHistoryCreatesRestoresScopesAndAgentUsesStoredScope(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	index, err := search.Open(filepath.Join(dir, "bleve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	owner, _ := st.CreateUser(ctx, "history-owner@example.invalid", "Owner", "hash", false)
+	other, _ := st.CreateUser(ctx, "history-other@example.invalid", "Other", "hash", false)
+	hub := mailhub.Service{Store: st, Blobs: blob.New(dir), Search: index}
+	for _, account := range provider.MockAccounts(owner.ID) {
+		if err := hub.Sync(ctx, account); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messages, err := hub.Messages(ctx, owner.ID, mailhub.Filter{})
+	if err != nil || len(messages) < 2 {
+		t.Fatalf("mock messages=%d err=%v", len(messages), err)
+	}
+	var receivedContext map[string]any
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body["context"], &receivedContext); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: ok\n\n"))
+	}))
+	defer sidecar.Close()
+	s := &Server{store: st, blobs: hub.Blobs, search: index, mailAIURL: sidecar.URL, mailAISharedToken: "history-secret", mailAIHTTPClient: sidecar.Client()}
+	withAuth := func(r *http.Request, user store.User) *http.Request {
+		r = r.WithContext(context.WithValue(r.Context(), userContextKey, currentUser{User: user}))
+		r.AddCookie(&http.Cookie{Name: csrfCookie, Value: "history-csrf"})
+		r.Header.Set("X-CSRF-Token", s.csrfForBase("history-csrf"))
+		return r
+	}
+	createBody := `{"scope":"mail_thread","message_id":` + strconvInt64(messages[0].ID) + `}`
+	create := withAuth(httptest.NewRequest(http.MethodPost, "/api/mail-ai/threads", strings.NewReader(createBody)), owner)
+	cw := httptest.NewRecorder()
+	s.handleAPI(cw, create)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("create thread=%d %s", cw.Code, cw.Body.String())
+	}
+	var created store.MailAIThreadSnapshot
+	if err := json.Unmarshal(cw.Body.Bytes(), &created); err != nil || created.ID == "" || created.Scope != store.MailAIThreadScopeMailThread {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	list := withAuth(httptest.NewRequest(http.MethodGet, "/api/mail-ai/threads", nil), owner)
+	lw := httptest.NewRecorder()
+	s.handleAPI(lw, list)
+	if lw.Code != http.StatusOK || !strings.Contains(lw.Body.String(), created.ID) || !strings.Contains(lw.Body.String(), `"scope":"mail_thread"`) {
+		t.Fatalf("history=%d %s", lw.Code, lw.Body.String())
+	}
+	restore := withAuth(httptest.NewRequest(http.MethodGet, "/api/mail-ai/thread?thread_id="+created.ID, nil), owner)
+	rw := httptest.NewRecorder()
+	s.handleAPI(rw, restore)
+	if rw.Code != http.StatusOK || !strings.Contains(rw.Body.String(), created.ID) {
+		t.Fatalf("restore=%d %s", rw.Code, rw.Body.String())
+	}
+	cross := withAuth(httptest.NewRequest(http.MethodGet, "/api/mail-ai/thread?thread_id="+created.ID, nil), other)
+	xw := httptest.NewRecorder()
+	s.handleAPI(xw, cross)
+	if xw.Code != http.StatusNotFound {
+		t.Fatalf("cross tenant restore=%d %s", xw.Code, xw.Body.String())
+	}
+	agentBody := `{"message_id":` + strconvInt64(messages[1].ID) + `,"thread_id":"` + created.ID + `","messages":[{"id":"u-scope","role":"user","parts":[{"type":"text","text":"stay in saved scope"}]}]}`
+	agent := withAuth(httptest.NewRequest(http.MethodPost, "/api/mail-ai/agent", strings.NewReader(agentBody)), owner)
+	aw := httptest.NewRecorder()
+	s.handleAPI(aw, agent)
+	if aw.Code != http.StatusOK {
+		t.Fatalf("agent=%d %s", aw.Code, aw.Body.String())
+	}
+	if receivedContext["scope"] != store.MailAIThreadScopeMailThread {
+		t.Fatalf("agent scope=%v", receivedContext["scope"])
+	}
+	gotMessageID, ok := receivedContext["message_id"].(float64)
+	if !ok || int64(gotMessageID) != messages[0].ID {
+		t.Fatalf("agent message_id=%v, want saved scope message %d", receivedContext["message_id"], messages[0].ID)
 	}
 }

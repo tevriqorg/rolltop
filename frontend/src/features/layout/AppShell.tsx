@@ -24,6 +24,8 @@ import type { OutboxRecord } from "../../lib/offlineOutbox";
 import { loadCollapsedAccounts, saveCollapsedAccounts } from "../../lib/sidebarLocal";
 import { createPluginSet } from "../../plugins/registry";
 import { SearchAutocomplete, useSearchAutocomplete } from "./SearchAutocomplete";
+import { MailGuidanceOverlay } from "../mail/MailGuidanceOverlay";
+import { registerMailSemanticAction, semanticAccountSlug, semanticString } from "../mail/semanticActions";
 
 /**
  * AppShell renders everything that survives route changes after login: topbar,
@@ -75,6 +77,24 @@ export function AppShell({
 
   mobileSidebarOpenRef.current = mobileSidebarOpen;
   onMoveMessagesRef.current = onMoveMessages;
+
+  useEffect(() => {
+    const dispose = [
+      registerMailSemanticAction({ name: "mail.compose", description: "Open the mail composer", risk: "read", run: () => openCompose("") }),
+      registerMailSemanticAction({ name: "mail.filter.unread", description: "Show unread mail", risk: "read", run: () => navigate(searchURL("is:unread")) })
+    ];
+    const accounts = new Map<number, Mailbox[]>();
+    mailboxes.forEach((mailbox) => accounts.set(mailbox.account_id, [...(accounts.get(mailbox.account_id) || []), mailbox]));
+    accounts.forEach((boxes) => {
+      const preferred = boxes.find((box) => box.role === "inbox") || boxes[0];
+      if (!preferred) return;
+      const label = preferred.account_label || preferred.account_email || `account-${preferred.account_id}`;
+      const action = { description: `Open ${label}`, risk: "read" as const, run: () => navigate(mailURL(preferred.id)) };
+      dispose.push(registerMailSemanticAction({ name: `mail.account.${semanticAccountSlug(label)}`, ...action }));
+      if (/\bwork\b/i.test(label)) dispose.push(registerMailSemanticAction({ name: "mail.account.work", ...action }));
+    });
+    return () => dispose.forEach((fn) => fn());
+  }, [mailboxes, navigate, openCompose]);
 
   useEffect(() => {
     return () => {
@@ -459,6 +479,7 @@ export function AppShell({
           </div>
         ) : null}
       </div>
+      <MailGuidanceOverlay />
       <button className="mobile-compose-fab" type="button" onClick={composeFromMobile} aria-label="Compose">
         <Icon name="edit" weight="bold" />
         <span>Compose</span>
@@ -645,6 +666,18 @@ function Topbar({
   useEffect(() => {
     setQuery(searchRoute(location.path).query);
   }, [location.path]);
+
+  useEffect(() => registerMailSemanticAction({
+    name: "mail.search",
+    description: "Search mail with a query",
+    risk: "read",
+    target: () => searchInputRef.current,
+    run: (input) => {
+      const next = semanticString(input, "query").trim();
+      setQuery(next);
+      navigate(next ? searchURL(next) : "/mail");
+    }
+  }), [navigate]);
 
   useEffect(() => {
     function focusSearch(event: KeyboardEvent) {
@@ -1041,7 +1074,6 @@ function Sidebar({
         Compose
       </a>
       <div className="sidebar-scroll">
-        <a href="/mock" className="folder" onClick={(event) => open(event, "/mock")}><span className="folder-name">Mock Mail Hub</span></a>
         <a
           href="/mail"
           className={`folder ${allMailActive ? "active" : ""}`}

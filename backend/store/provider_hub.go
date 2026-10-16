@@ -13,10 +13,12 @@ type ProviderSource struct {
 	Cursor               string
 }
 
-// EnsureMockSource creates compatibility envelopes for existing message/blob
-// tables, never IMAP accounts usable by account lookup or scheduling.
+// EnsureMockSource creates provider-managed compatibility envelopes for existing
+// message/blob tables. They are visible in the normal Rolltop sidebar but remain
+// excluded from IMAP scheduling/account settings by provider_sources.
 func (s *Store) EnsureMockSource(ctx context.Context, userID int64, id string) (ProviderSource, error) {
-	if userID <= 0 || (id != "personal" && id != "work") {
+	label, email, ok := mockSourceIdentity(id)
+	if userID <= 0 || !ok {
 		return ProviderSource{}, errors.New("unknown mock account")
 	}
 	db, err := s.dataDB(ctx, userID)
@@ -31,7 +33,7 @@ func (s *Store) EnsureMockSource(ctx context.Context, userID int64, id string) (
 	out := ProviderSource{ID: id}
 	err = tx.QueryRowContext(ctx, `SELECT account_id,mailbox_id,cursor FROM provider_sources WHERE user_id=? AND provider='mock' AND source_id=?`, userID, id).Scan(&out.AccountID, &out.MailboxID, &out.Cursor)
 	if err == sql.ErrNoRows {
-		result, e := tx.ExecContext(ctx, `INSERT INTO mail_accounts(user_id,email,label,host,port,username,encrypted_password,created_at,updated_at) VALUES(?,?,?,'',0,'','',?,?)`, userID, id+"@example.invalid", "Mock "+id, nowUnix(), nowUnix())
+		result, e := tx.ExecContext(ctx, `INSERT INTO mail_accounts(user_id,email,label,host,port,username,encrypted_password,created_at,updated_at) VALUES(?,?,?,'',0,'','',?,?)`, userID, email, label, nowUnix(), nowUnix())
 		if e != nil {
 			return out, e
 		}
@@ -39,7 +41,7 @@ func (s *Store) EnsureMockSource(ctx context.Context, userID int64, id string) (
 		if err != nil {
 			return out, err
 		}
-		result, err = tx.ExecContext(ctx, `INSERT INTO mailboxes(user_id,account_id,name,sync_mode,show_in_sidebar,show_in_all_mail,include_in_search,created_at,updated_at) VALUES(?,?,'Mock mirror','off',0,0,1,?,?)`, userID, out.AccountID, nowUnix(), nowUnix())
+		result, err = tx.ExecContext(ctx, `INSERT INTO mailboxes(user_id,account_id,name,sync_mode,role,icon,show_in_sidebar,show_in_all_mail,include_in_search,created_at,updated_at) VALUES(?,?,'INBOX','off','inbox','inbox',1,1,1,?,?)`, userID, out.AccountID, nowUnix(), nowUnix())
 		if err != nil {
 			return out, err
 		}
@@ -52,7 +54,28 @@ func (s *Store) EnsureMockSource(ctx context.Context, userID int64, id string) (
 	if err != nil {
 		return out, err
 	}
+	// Upgrade older hidden Gate-F mock envelopes in place so the same data appears
+	// inside the normal Rolltop mail experience without copying or re-importing it.
+	if _, err = tx.ExecContext(ctx, `UPDATE mail_accounts SET email=?,label=?,updated_at=? WHERE user_id=? AND id=?`, email, label, nowUnix(), userID, out.AccountID); err != nil {
+		return out, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE mailboxes SET name='INBOX',role='inbox',icon='inbox',sync_mode='off',show_in_sidebar=1,show_in_all_mail=1,include_in_search=1,updated_at=? WHERE user_id=? AND id=?`, nowUnix(), userID, out.MailboxID); err != nil {
+		return out, err
+	}
 	return out, tx.Commit()
+}
+
+func mockSourceIdentity(id string) (label, email string, ok bool) {
+	switch id {
+	case "personal":
+		return "Personal", "vipdonmen.personal@example.test", true
+	case "work":
+		return "Work", "vipdonmen.work@example.test", true
+	case "travel":
+		return "Travel", "vipdonmen.travel@example.test", true
+	default:
+		return "", "", false
+	}
 }
 func (s *Store) ProviderJournal(ctx context.Context, userID int64, id string) ([]string, error) {
 	db, err := s.dataDB(ctx, userID)

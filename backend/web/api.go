@@ -14,6 +14,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "mock-hub" || strings.HasPrefix(path, "mock-hub/"):
 		s.apiMockHub(w, r, path)
+	case path == "account-connectors/google" || strings.HasPrefix(path, "account-connectors/google/"):
+		s.apiGoogleConnector(w, r, path)
 	case path == "mail-ai/model-config":
 		s.apiMailAIModelConfig(w, r)
 	case path == "mail-ai" || strings.HasPrefix(path, "mail-ai/"):

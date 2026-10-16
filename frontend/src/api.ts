@@ -495,6 +495,9 @@ export const api = {
     postJSON<{ ok: boolean }>("/api/password-reset/request", csrf, { email }),
   completePasswordReset: (csrf: string, token: string, password: string) =>
     postJSON<{ ok: boolean }>("/api/password-reset/complete", csrf, { token, password }),
+  googleConnectorStatus: () => getJSON<{ configured: boolean; connections: Array<{ subject: string; email: string; display_name: string; scopes: string[]; capabilities: string[] }>; census_required?: boolean; backfill_locked: boolean }>("/api/account-connectors/google"),
+  startGoogleConnector: (csrf: string) => postJSON<{ authorization_url: string }>("/api/account-connectors/google/start", csrf, {}),
+  runGoogleCensus: (csrf: string) => postJSON<{ account_email: string; backfill_locked: boolean; census: { message_count: number; estimated_raw_bytes: number; expected_evidence_bytes: number; recommended_free_disk: number; method: string; exact: boolean } }>("/api/account-connectors/google/census", csrf, {}),
   saveIMAPAccount: (csrf: string, account: Record<string, unknown>) =>
     postJSON<{ ok: boolean; account: Account }>("/api/account/imap", csrf, account),
 

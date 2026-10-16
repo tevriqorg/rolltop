@@ -27,7 +27,7 @@ it("shows census before sync, applies unified filters, opens full threads, and p
     await act(async () => { root.render(createElement(MockHub, { csrf: "csrf-test", datePrefs: {} as any, swipePreferences: {} as any, navigate, addToast: vi.fn() })); });
     expect(container.textContent).toContain("Real credentials: 0 · OAuth: 0");
     expect(container.querySelector('[aria-label="Storage Census"]')?.textContent).toContain("53477376");
-    expect(container.querySelector('[aria-label="Mail AI Side Chat"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="Mail AI Side Chat"]')).toBeNull();
     expect(container.textContent).toContain("项目计划");
     expect(container.textContent).toContain("Large message");
     expect(container.textContent).toContain("Oversized stub");
