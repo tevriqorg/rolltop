@@ -1159,3 +1159,30 @@
 .mail-ai-markdown table { display: block; max-width: 100%; overflow-x: auto; margin: 9px 0 12px; font-size: .82rem; }
 .mail-ai-markdown th, .mail-ai-markdown td { padding: 6px 8px; white-space: normal; }
 .mail-ai-markdown a { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Mail AI A5: domain-specific tool cards. Keep raw tool JSON out of the primary UX. */
+.mail-ai-tool-summary { margin-left: auto; color: var(--muted); font-size: .7rem; font-weight: 500; }
+.mail-ai-tool-empty { margin-top: 8px; color: var(--muted); font-size: .76rem; }
+.mail-ai-tool-mail-list { display: grid; gap: 6px; margin-top: 8px; }
+.mail-ai-tool-mail { display: grid; gap: 2px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.mail-ai-tool-mail strong, .mail-ai-tool-message > strong, .mail-ai-tool-draft > strong { font-size: .8rem; line-height: 1.35; }
+.mail-ai-tool-mail span, .mail-ai-tool-message span, .mail-ai-tool-draft > span { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
+.mail-ai-tool-mail p, .mail-ai-tool-message p, .mail-ai-tool-thread p, .mail-ai-tool-draft p { margin: 4px 0 0; font-size: .75rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-ai-tool-message, .mail-ai-tool-draft { display: grid; gap: 6px; margin-top: 8px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.mail-ai-tool-message dl { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 3px 7px; margin: 0; font-size: .7rem; }
+.mail-ai-tool-message dt { color: var(--muted); }
+.mail-ai-tool-message dd { margin: 0; overflow-wrap: anywhere; }
+.mail-ai-tool-thread { display: grid; gap: 6px; margin-top: 8px; }
+.mail-ai-tool-thread-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.mail-ai-tool-thread-head span { color: var(--muted); font-size: .7rem; }
+.mail-ai-tool-thread article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 7px 8px; border-left: 2px solid var(--border); }
+.mail-ai-tool-thread article > span, .mail-ai-tool-thread article > time { font-size: .7rem; color: var(--muted); overflow-wrap: anywhere; }
+.mail-ai-tool-thread article p { grid-column: 1 / -1; }
+.mail-ai-tool-badge { width: fit-content; padding: 2px 6px; border-radius: 999px; background: var(--surface-subtle); border: 1px solid var(--border); }
+.mail-ai-tool-mutation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; margin-top: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: .74rem; }
+.mail-ai-tool-mutation > span:first-of-type { grid-column: 1; color: var(--muted); }
+.mail-ai-tool-mutation .done, .mail-ai-tool-mutation .pending { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.mail-ai-tool-mutation .done { color: var(--accent-strong); }
+.mail-ai-tool-mutation .pending { color: var(--muted); }
+.mail-ai-approval > div:first-child { display: grid; gap: 2px; }
+.mail-ai-approval > div:first-child span, .mail-ai-approval small { color: var(--muted); }

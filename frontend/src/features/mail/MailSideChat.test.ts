@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailAIScopeLabel, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, toolActivityLabel, traceResultSummary } from "./MailSideChat";
+import { mailAIScopeLabel, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
 
 describe("MailSideChat tool activity", () => {
   it("shows useful mail-search progress instead of raw tool JSON", () => {
@@ -9,6 +9,17 @@ describe("MailSideChat tool activity", () => {
 
   it("summarizes completed tool result counts", () => {
     expect(toolActivityLabel("get_thread", {}, [{ id: 1 }, { id: 2 }], false)).toBe("读取邮件线程完成 · 2 条结果");
+  });
+
+  it("maps mail tools to dedicated readable card types", () => {
+    expect(mailToolCardKind("search_mail")).toBe("mail-list");
+    expect(mailToolCardKind("get_message")).toBe("message");
+    expect(mailToolCardKind("get_thread")).toBe("thread");
+    expect(mailToolCardKind("draft_reply")).toBe("draft");
+    expect(mailToolCardKind("archive_message")).toBe("mutation");
+    expect(mailToolCardSummary("search_mail", [{ subject: "A" }, { subject: "B" }])).toBe("2 封邮件");
+    expect(mailToolCardSummary("draft_reply", { subject: "Re: 项目" })).toBe("Re: 项目");
+    expect(mailToolCardSummary("archive_message", { ok: true })).toBe("已完成");
   });
 
   it("labels persisted conversation scopes distinctly", () => {

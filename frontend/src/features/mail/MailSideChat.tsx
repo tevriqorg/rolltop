@@ -79,6 +79,119 @@ export function toolActivityLabel(name: string, args: unknown, result: unknown, 
   return `${label}完成`;
 }
 
+type MailToolCardKind = "mail-list" | "message" | "thread" | "draft" | "mutation" | "generic";
+
+type MailToolItem = {
+  message_id?: number;
+  account?: string;
+  thread_id?: string;
+  subject?: string;
+  from?: string;
+  to?: string;
+  date?: string;
+  body?: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asMailToolItem(value: unknown): MailToolItem {
+  const record = asRecord(value);
+  return {
+    message_id: typeof record.message_id === "number" ? record.message_id : undefined,
+    account: typeof record.account === "string" ? record.account : undefined,
+    thread_id: typeof record.thread_id === "string" ? record.thread_id : undefined,
+    subject: typeof record.subject === "string" ? record.subject : undefined,
+    from: typeof record.from === "string" ? record.from : undefined,
+    to: typeof record.to === "string" ? record.to : undefined,
+    date: typeof record.date === "string" ? record.date : undefined,
+    body: typeof record.body === "string" ? record.body : undefined
+  };
+}
+
+export function mailToolCardKind(toolName: string): MailToolCardKind {
+  if (toolName === "list_mail" || toolName === "search_mail") return "mail-list";
+  if (toolName === "get_message") return "message";
+  if (toolName === "get_thread") return "thread";
+  if (toolName === "draft_reply") return "draft";
+  if (toolName === "add_label" || toolName === "archive_message" || toolName === "mark_read") return "mutation";
+  return "generic";
+}
+
+export function mailToolCardSummary(toolName: string, result: unknown) {
+  const kind = mailToolCardKind(toolName);
+  if ((kind === "mail-list" || kind === "thread") && Array.isArray(result)) return `${result.length} 封邮件`;
+  if (kind === "message") return asMailToolItem(result).subject || "邮件详情";
+  if (kind === "draft") {
+    const record = asRecord(result);
+    return typeof record.subject === "string" && record.subject.trim() ? record.subject : "回复草稿";
+  }
+  if (kind === "mutation") {
+    const record = asRecord(result);
+    return record.ok === true ? "已完成" : "等待执行";
+  }
+  return "工具结果";
+}
+
+function compactToolText(value: string | undefined, limit = 180) {
+  const text = (value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function MailResultList({ result }: { result: unknown }) {
+  const items = Array.isArray(result) ? result.map(asMailToolItem) : [];
+  if (items.length === 0) return <div className="mail-ai-tool-empty">没有匹配邮件。</div>;
+  return <div className="mail-ai-tool-mail-list">{items.map((item, index) => <article className="mail-ai-tool-mail" key={`${item.message_id || item.thread_id || index}`}>
+    <strong>{item.subject || "（无主题）"}</strong>
+    <span>{[item.from, item.account, item.date].filter(Boolean).join(" · ")}</span>
+    {item.body ? <p>{compactToolText(item.body, 120)}</p> : null}
+  </article>)}</div>;
+}
+
+function MailMessageCard({ result }: { result: unknown }) {
+  const item = asMailToolItem(result);
+  return <article className="mail-ai-tool-message">
+    <strong>{item.subject || "（无主题）"}</strong>
+    <dl>
+      {item.from ? <><dt>发件人</dt><dd>{item.from}</dd></> : null}
+      {item.to ? <><dt>收件人</dt><dd>{item.to}</dd></> : null}
+      {item.account ? <><dt>账号</dt><dd>{item.account}</dd></> : null}
+      {item.date ? <><dt>时间</dt><dd>{item.date}</dd></> : null}
+    </dl>
+    {item.body ? <p>{compactToolText(item.body)}</p> : null}
+  </article>;
+}
+
+function MailThreadCard({ result }: { result: unknown }) {
+  const items = Array.isArray(result) ? result.map(asMailToolItem) : [];
+  return <div className="mail-ai-tool-thread">
+    <div className="mail-ai-tool-thread-head"><strong>{items[0]?.subject || "邮件线程"}</strong><span>{items.length} 封</span></div>
+    {items.map((item, index) => <article key={`${item.message_id || index}`}><span>{item.from || "未知发件人"}</span><time>{item.date || ""}</time>{item.body ? <p>{compactToolText(item.body, 120)}</p> : null}</article>)}
+  </div>;
+}
+
+function DraftCard({ result }: { result: unknown }) {
+  const record = asRecord(result);
+  const to = typeof record.to === "string" ? record.to : "";
+  const subject = typeof record.subject === "string" ? record.subject : "回复草稿";
+  const body = typeof record.body === "string" ? record.body : "";
+  return <article className="mail-ai-tool-draft">
+    <span className="mail-ai-tool-badge">草稿 · 未发送</span>
+    <strong>{subject}</strong>
+    {to ? <span>收件人：{to}</span> : null}
+    {body ? <p>{body}</p> : null}
+  </article>;
+}
+
+function MutationCard({ toolName, args, result }: { toolName: string; args: unknown; result: unknown }) {
+  const input = asRecord(args);
+  const output = asRecord(result);
+  const detail = toolName === "add_label" ? `标签：${String(input.label || "")}` : toolName === "mark_read" ? (input.read === false ? "标记为未读" : "标记为已读") : "移出收件箱";
+  return <div className="mail-ai-tool-mutation"><strong>{TOOL_LABELS[toolName] || toolName}</strong><span>{detail}</span><span className={output.ok === true ? "done" : "pending"}>{output.ok === true ? "已完成" : "等待执行"}</span></div>;
+}
+
 export function traceResultSummary(event: TraceEvent) {
   if (event.error_text) return `失败：${event.error_text}`;
   if (Array.isArray(event.output)) return `结果：${event.output.length} 条`;
@@ -114,16 +227,24 @@ function ToolCard(props: ToolCallMessagePartProps) {
   const { toolName, args, result, status, approval, respondToApproval, isError } = props;
   const running = status?.type === "running" || result === undefined;
   const pending = approval && approval.approved === undefined && !approval.resolution;
-  return <section className={`mail-ai-tool-card${isError ? " error" : ""}`}>
+  const kind = mailToolCardKind(toolName);
+  const input = asRecord(args);
+  const approvalDetail = toolName === "add_label" ? `添加标签 ${String(input.label || "")}` : toolName === "mark_read" ? (input.read === false ? "标记为未读" : "标记为已读") : toolName === "archive_message" ? "归档邮件" : TOOL_LABELS[toolName] || toolName;
+  return <section className={`mail-ai-tool-card kind-${kind}${isError ? " error" : ""}`}>
     <div className="mail-ai-tool-title">
       <span className="mail-ai-tool-dot" aria-hidden="true" />
       <strong>{toolActivityLabel(toolName, args, result, running)}</strong>
+      {!running && result !== undefined ? <span className="mail-ai-tool-summary">{mailToolCardSummary(toolName, result)}</span> : null}
     </div>
-    {toolName === "draft_reply" && result ? <pre className="mail-ai-tool-result">{JSON.stringify(result, null, 2)}</pre> : null}
+    {!running && kind === "mail-list" ? <MailResultList result={result} /> : null}
+    {!running && kind === "message" ? <MailMessageCard result={result} /> : null}
+    {!running && kind === "thread" ? <MailThreadCard result={result} /> : null}
+    {!running && kind === "draft" ? <DraftCard result={result} /> : null}
+    {!running && kind === "mutation" ? <MutationCard toolName={toolName} args={args} result={result} /> : null}
     {pending ? <div className="mail-ai-approval">
-      <span>这一步会修改邮件状态，需要你的确认。</span>
+      <div><strong>需要确认</strong><span>{approvalDetail}</span>{typeof input.message_id === "number" ? <small>邮件 #{input.message_id}</small> : null}</div>
       <div>
-        <button type="button" onClick={() => void respondToApproval({ approved: true })}>允许</button>
+        <button type="button" onClick={() => void respondToApproval({ approved: true })}>允许执行</button>
         <button type="button" className="secondary" onClick={() => void respondToApproval({ approved: false, reason: "User declined" })}>拒绝</button>
       </div>
     </div> : null}
