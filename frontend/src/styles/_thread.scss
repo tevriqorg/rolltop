@@ -1186,3 +1186,15 @@
 .mail-ai-tool-mutation .pending { color: var(--muted); }
 .mail-ai-approval > div:first-child { display: grid; gap: 2px; }
 .mail-ai-approval > div:first-child span, .mail-ai-approval small { color: var(--muted); }
+
+/* Mail AI A6: continuous auditable tool timeline. */
+.mail-ai-timeline .mail-ai-trace-note { display: grid; gap: 2px; }
+.mail-ai-timeline .mail-ai-trace-note strong { color: var(--text); font-size: .76rem; }
+.mail-ai-timeline-item { position: relative; border: 0; background: transparent; padding: 2px 4px; gap: 9px; }
+.mail-ai-timeline-rail { width: 24px; align-self: stretch; display: flex; flex-direction: column; align-items: center; }
+.mail-ai-timeline-rail i { width: 1px; min-height: 20px; flex: 1; background: var(--border); margin-top: 3px; }
+.mail-ai-timeline-item:last-child .mail-ai-timeline-rail i { display: none; }
+.mail-ai-timeline-item > div:last-child { padding: 5px 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-ai-timeline-phase { width: fit-content; padding: 1px 6px; border-radius: 999px; background: var(--surface-subtle); color: var(--muted) !important; font-size: .64rem !important; font-weight: 700; }
+.mail-ai-timeline-item.state-error > div:last-child { border-color: var(--danger); }
+.mail-ai-timeline-item.state-running .mail-ai-trace-index { outline: 2px solid var(--border); }

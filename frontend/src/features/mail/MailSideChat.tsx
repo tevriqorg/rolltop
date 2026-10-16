@@ -44,6 +44,14 @@ type TraceEvent = {
   error_text?: string;
 };
 type TraceResponse = { thread_id: string; events: TraceEvent[] };
+type TimelinePhase = "浏览" | "搜索" | "读取" | "比较" | "动作" | "结论";
+type TimelineItem = {
+  id: string;
+  phase: TimelinePhase;
+  title: string;
+  detail: string;
+  state: "running" | "done" | "error";
+};
 
 const TOOL_LABELS: Record<string, string> = {
   list_mail: "浏览邮箱",
@@ -190,6 +198,70 @@ function MutationCard({ toolName, args, result }: { toolName: string; args: unkn
   const output = asRecord(result);
   const detail = toolName === "add_label" ? `标签：${String(input.label || "")}` : toolName === "mark_read" ? (input.read === false ? "标记为未读" : "标记为已读") : "移出收件箱";
   return <div className="mail-ai-tool-mutation"><strong>{TOOL_LABELS[toolName] || toolName}</strong><span>{detail}</span><span className={output.ok === true ? "done" : "pending"}>{output.ok === true ? "已完成" : "等待执行"}</span></div>;
+}
+
+export function mailAITimelinePhase(toolName: string): Exclude<TimelinePhase, "比较" | "结论"> {
+  if (toolName === "list_mail") return "浏览";
+  if (toolName === "search_mail") return "搜索";
+  if (toolName === "get_message" || toolName === "get_thread") return "读取";
+  return "动作";
+}
+
+function timelineEvidenceIDs(event: TraceEvent) {
+  if (event.tool_name !== "get_message" && event.tool_name !== "get_thread") return [] as string[];
+  const values = Array.isArray(event.output) ? event.output : event.output ? [event.output] : [];
+  return values.map((value) => {
+    const record = asRecord(value);
+    const messageID = record.message_id;
+    if (typeof messageID === "number" || typeof messageID === "string") return String(messageID);
+    const threadID = record.thread_id;
+    return typeof threadID === "string" ? `thread:${threadID}` : "";
+  }).filter(Boolean);
+}
+
+export function latestAssistantVisibleText(messages: UIMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
+    const text = message.parts.map((part) => {
+      const record = part as unknown as Record<string, unknown>;
+      return record.type === "text" && typeof record.text === "string" ? record.text.trim() : "";
+    }).filter(Boolean).join("\n").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+export function mailAIWorkflowTimeline(events: TraceEvent[], messages: UIMessage[]): TimelineItem[] {
+  const items: TimelineItem[] = events.map((event, index) => ({
+    id: event.id || `tool:${index}`,
+    phase: mailAITimelinePhase(event.tool_name),
+    title: toolActivityLabel(event.tool_name, event.input, event.output, event.state !== "output-available" && !event.error_text),
+    detail: traceResultSummary(event),
+    state: event.error_text ? "error" : event.state === "output-available" ? "done" : "running"
+  }));
+  const evidence = new Set(events.flatMap(timelineEvidenceIDs));
+  if (evidence.size >= 2) {
+    const lastRead = items.map((item, index) => item.phase === "读取" ? index : -1).filter((index) => index >= 0).at(-1) ?? items.length - 1;
+    items.splice(lastRead + 1, 0, {
+      id: "compare:evidence",
+      phase: "比较",
+      title: `比较 ${evidence.size} 个已读取邮件证据`,
+      detail: "基于工具返回的邮件内容汇总证据；不展示模型私有推理。",
+      state: "done"
+    });
+  }
+  const conclusion = latestAssistantVisibleText(messages);
+  if (conclusion) {
+    items.push({
+      id: "conclusion:visible",
+      phase: "结论",
+      title: "最终可见回答",
+      detail: compactToolText(conclusion, 220),
+      state: "done"
+    });
+  }
+  return items;
 }
 
 export function traceResultSummary(event: TraceEvent) {
@@ -449,15 +521,19 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
         <span className="mail-ai-history-title">{threadTitle(item)}</span>
       </button>)}
     </section> : null}
-    {showTrace ? <section className="mail-ai-trace" aria-label="Mail AI work trace">
-      <div className="mail-ai-trace-note">仅显示可审计的工具步骤和结果，不包含模型私有推理。</div>
-      {trace.length === 0 ? <div className="mail-ai-empty">这个会话还没有工具步骤。</div> : trace.map((event, index) => <article className="mail-ai-trace-item" key={`${event.id}-${index}`}>
-        <span className="mail-ai-trace-index">{index + 1}</span>
-        <div>
-          <strong>{toolActivityLabel(event.tool_name, event.input, event.output, event.state !== "output-available" && !event.error_text)}</strong>
-          <span>{traceResultSummary(event)}</span>
-        </div>
-      </article>)}
+    {showTrace ? <section className="mail-ai-trace mail-ai-timeline" aria-label="Mail AI work timeline">
+      <div className="mail-ai-trace-note"><strong>工作时间线</strong><span>浏览 → 搜索 → 读取 → 比较 → 动作 → 结论；仅显示可审计证据，不包含模型私有推理。</span></div>
+      {(() => {
+        const timeline = mailAIWorkflowTimeline(trace, thread?.messages || []);
+        return timeline.length === 0 ? <div className="mail-ai-empty">这个会话还没有可验证工作步骤。</div> : timeline.map((item, index) => <article className={`mail-ai-trace-item mail-ai-timeline-item state-${item.state}`} key={`${item.id}-${index}`}>
+          <div className="mail-ai-timeline-rail"><span className="mail-ai-trace-index">{index + 1}</span><i aria-hidden="true" /></div>
+          <div>
+            <span className="mail-ai-timeline-phase">{item.phase}</span>
+            <strong>{item.title}</strong>
+            <span>{item.detail}</span>
+          </div>
+        </article>);
+      })()}
     </section> : null}
     {threadError ? <div className="mail-ai-empty mail-ai-error">{threadError}</div> : null}
     {!thread && !threadError ? <div className="mail-ai-empty">正在恢复 Mail AI 对话…</div> : null}
