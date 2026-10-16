@@ -251,6 +251,71 @@ func TestMailAIComposeActionToolsUseRolltopComposeAndApproval(t *testing.T) {
 	}
 }
 
+func TestMailAIReplyAndForwardUseRolltopComposePipeline(t *testing.T) {
+	ctx := context.Background()
+	server, user, _, _, _ := setupAutocryptComposeTest(t, ctx, false)
+	accounts, err := server.store.ListMailAccountsForUser(ctx, user.ID)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts=%d err=%v", len(accounts), err)
+	}
+	inbox, err := server.store.GetOrCreateMailbox(ctx, user.ID, accounts[0].ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("From: Sender <sender@example.test>\r\nTo: Me <me@example.test>\r\nSubject: A9 source\r\nMessage-ID: <a9-incoming@example.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOriginal A9 body\r\n")
+	saved, err := server.blobs.SaveRawMessage(user.ID, accounts[0].ID, "INBOX", 91, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobRec, err := server.store.CreateBlob(ctx, store.BlobRecord{
+		UserID: user.ID, Kind: "message", Path: saved.Path, SHA256: saved.SHA256, Size: saved.Size,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := server.store.CreateMessage(ctx, store.CreateMessage{
+		UserID: user.ID, AccountID: accounts[0].ID, MailboxID: inbox.ID, BlobID: blobRec.ID, BlobPath: blobRec.Path,
+		MessageIDHeader: "<a9-incoming@example.test>", Subject: "A9 source",
+		FromAddr: "Sender <sender@example.test>", ToAddr: "Me <me@example.test>",
+		Date: time.Now().UTC(), InternalDate: time.Now().UTC(), UID: 91,
+		BodyText: "Original A9 body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/mail-ai/tools", nil)
+	replyArgs, _ := json.Marshal(map[string]any{"message_id": incoming.ID, "body": "AI reply body"})
+	if _, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "reply_mail", Arguments: replyArgs}); status != http.StatusConflict || err == nil {
+		t.Fatalf("unconfirmed reply status=%d err=%v", status, err)
+	}
+	reply, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "reply_mail", Arguments: replyArgs, Confirmed: true})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("confirmed reply status=%d err=%v response=%+v", status, err, reply)
+	}
+	replyResult := reply.Result.(map[string]any)
+	replyMessage, err := server.store.GetMessageForUser(ctx, user.ID, replyResult["message_id"].(int64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replyMessage.InReplyTo != incoming.MessageIDHeader || !strings.Contains(replyMessage.ToAddr, "sender@example.test") || !strings.Contains(replyMessage.BodyText, "AI reply body") {
+		t.Fatalf("reply did not preserve Rolltop threading/recipient/body: %+v", replyMessage)
+	}
+
+	forwardArgs, _ := json.Marshal(map[string]any{"message_id": incoming.ID, "to": "forward@example.test", "body": "FYI from AI"})
+	forwarded, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "forward_mail", Arguments: forwardArgs, Confirmed: true})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("forward status=%d err=%v response=%+v", status, err, forwarded)
+	}
+	forwardResult := forwarded.Result.(map[string]any)
+	forwardMessage, err := server.store.GetMessageForUser(ctx, user.ID, forwardResult["message_id"].(int64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(forwardMessage.ToAddr, "forward@example.test") || !strings.HasPrefix(forwardMessage.Subject, "Fwd:") || !strings.Contains(forwardMessage.BodyText, "FYI from AI") {
+		t.Fatalf("forward did not preserve Rolltop compose semantics: %+v", forwardMessage)
+	}
+}
+
 func TestMailAIThreadEndpointPersistsVisibleMessagesAndRejectsCrossTenantWrite(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
