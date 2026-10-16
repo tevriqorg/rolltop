@@ -1203,3 +1203,33 @@
 .mail-ai-timeline-phase { width: fit-content; padding: 1px 6px; border-radius: 999px; background: var(--surface-subtle); color: var(--muted) !important; font-size: .64rem !important; font-weight: 700; }
 .mail-ai-timeline-item.state-error > div:last-child { border-color: var(--danger); }
 .mail-ai-timeline-item.state-running .mail-ai-trace-index { outline: 2px solid var(--border); }
+
+.email-frame-shell { position: relative; }
+.mail-ai-selection-toolbar {
+  position: sticky;
+  bottom: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg, var(--surface));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+.mail-ai-selection-toolbar > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: .78;
+}
+.mail-ai-selection-toolbar button { white-space: nowrap; }
+@media (max-width: 720px) {
+  .mail-ai-selection-toolbar { flex-wrap: wrap; }
+  .mail-ai-selection-toolbar > span { flex-basis: 100%; }
+}

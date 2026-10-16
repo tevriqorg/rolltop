@@ -16,6 +16,21 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type ModelConfig = { configured: boolean; model?: string };
+
+export type MailAIQuoteRequest = {
+  id: number;
+  action: "explain" | "translate" | "summarize" | "reply";
+  text: string;
+  messageID: number;
+};
+
+export function mailAISelectionPrompt(request: MailAIQuoteRequest) {
+  const action = request.action === "explain" ? "解释这段选中的邮件正文，说明它的含义和上下文重点"
+    : request.action === "translate" ? "把这段选中的邮件正文翻译成中文；如果本来就是中文，则翻译成自然英文"
+      : request.action === "summarize" ? "只基于这段选中的邮件正文做简洁总结，并指出其中的行动项或截止信息"
+        : "基于这段选中的邮件正文起草一封回复；只生成草稿，不发送，并明确回应选区里的关键点";
+  return `${action}。选区来自 message #${request.messageID}。\n\n<selected-mail-text>\n${request.text}\n</selected-mail-text>`;
+}
 type ThreadScope = "global" | "message" | "mail_thread";
 type ThreadContext = {
   subject?: string;
@@ -405,7 +420,7 @@ function AssistantThread({ empty }: { empty: boolean }) {
   </ThreadPrimitive.Root>;
 }
 
-function MailSideChatRuntime({ csrf, thread, onPersisted }: { csrf: string; thread: ThreadSnapshot; onPersisted: () => void }) {
+function MailSideChatRuntime({ csrf, thread, onPersisted, quoteRequest, onQuoteConsumed }: { csrf: string; thread: ThreadSnapshot; onPersisted: () => void; quoteRequest?: MailAIQuoteRequest | null; onQuoteConsumed: (id: number) => void }) {
   const suggestionAdapter = useMemo(() => createSuggestionAdapter({
     key: `mail-a7:${thread.scope}`,
     count: 3,
@@ -434,6 +449,11 @@ function MailSideChatRuntime({ csrf, thread, onPersisted }: { csrf: string; thre
       }).catch(() => console.error("Mail AI request failed without logging private content"));
     }
   });
+  useEffect(() => {
+    if (!quoteRequest) return;
+    runtime.thread.append(mailAISelectionPrompt(quoteRequest));
+    onQuoteConsumed(quoteRequest.id);
+  }, [onQuoteConsumed, quoteRequest, runtime]);
   return <AssistantRuntimeProvider runtime={runtime}>
     <AssistantThread empty={thread.messages.length === 0} />
   </AssistantRuntimeProvider>;
@@ -449,7 +469,7 @@ function threadTime(value: string) {
   return date.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: string; messageID: number; defaultOpen?: boolean }) {
+export function MailSideChat({ csrf, messageID, defaultOpen = false, quoteRequest }: { csrf: string; messageID: number; defaultOpen?: boolean; quoteRequest?: MailAIQuoteRequest | null }) {
   const [open, setOpen] = useState(defaultOpen);
   const [model, setModel] = useState("Agent");
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
@@ -460,6 +480,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
   const [showTrace, setShowTrace] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingQuote, setPendingQuote] = useState<MailAIQuoteRequest | null>(null);
 
   const loadHistory = useCallback(() => {
     void fetch("/api/mail-ai/threads", { headers: { Accept: "application/json" }, cache: "no-store" })
@@ -495,6 +516,12 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
       setBusy(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!quoteRequest) return;
+    setOpen(true);
+    setPendingQuote(quoteRequest);
+  }, [quoteRequest]);
 
   useEffect(() => {
     let active = true;
@@ -600,7 +627,7 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false }: { csrf: s
     {threadError ? <div className="mail-ai-empty mail-ai-error">{threadError}</div> : null}
     {!thread && !threadError ? <div className="mail-ai-empty">正在恢复 Mail AI 对话…</div> : null}
     {thread ? <div className="mail-ai-runtime-shell" key={thread.thread_id}>
-      <MailSideChatRuntime csrf={csrf} thread={thread} onPersisted={() => { loadHistory(); if (showTrace) loadTrace(thread.thread_id); }} />
+      <MailSideChatRuntime csrf={csrf} thread={thread} quoteRequest={pendingQuote} onQuoteConsumed={(id) => setPendingQuote((current) => current?.id === id ? null : current)} onPersisted={() => { loadHistory(); if (showTrace) loadTrace(thread.thread_id); }} />
     </div> : null}
   </aside>;
 }

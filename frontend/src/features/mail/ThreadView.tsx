@@ -29,8 +29,8 @@ import { TrustImageSourceAction } from "../../plugins/trustedImageSources/TrustI
 import type { RuntimeMessageDetailsPlugin, RuntimePlugin } from "../../plugins/runtime";
 import { threadSecurityPlugin, type ThreadSecurityDecryptedAttachment, type ThreadSecurityGossipKey, type ThreadSecurityOpenResult, type ThreadSecuritySignatureStatus } from "../../plugins/threadSecurity";
 import { SnoozeControl } from "./SnoozeControl";
-import { MailSideChat } from "./MailSideChat";
-import { EmailFrame } from "./EmailFrame";
+import { MailSideChat, type MailAIQuoteRequest } from "./MailSideChat";
+import { EmailFrame, type MailSelectionAction } from "./EmailFrame";
 
 type MessageLoadStatus = {
   conversation: number;
@@ -882,6 +882,8 @@ export function ThreadView({
   const [showImages, setShowImages] = useState(() => new URLSearchParams(location.search).get("images") === "1");
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [inlineReply, setInlineReply] = useState<ComposeForm | null>(null);
+  const [aiQuoteRequest, setAIQuoteRequest] = useState<MailAIQuoteRequest | null>(null);
+  const aiQuoteID = useRef(0);
 
   // While an inline reply is open, keep the floating Compose button from
   // covering the reply's send bar on small screens.
@@ -1982,6 +1984,10 @@ export function ThreadView({
                       highlightQuery={highlightQuery}
                       highlightTerms={highlightTerms}
                       full={Boolean(pgpBody?.doc)}
+                      onSelectionAction={(action: MailSelectionAction, text) => {
+                        aiQuoteID.current += 1;
+                        setAIQuoteRequest({ id: aiQuoteID.current, action, text, messageID: item.message.id });
+                      }}
                     />
                   )}
                   {item.has_hidden_quoted && item.full_body_doc && !(securityEnabled && item.message.is_signed) ? (
@@ -2102,7 +2108,7 @@ export function ThreadView({
           })}
         </section>
       ) : null}
-      <MailSideChat csrf={csrf} messageID={currentMessageID} />
+      <MailSideChat csrf={csrf} messageID={currentMessageID} quoteRequest={aiQuoteRequest} />
     </>
   );
 }

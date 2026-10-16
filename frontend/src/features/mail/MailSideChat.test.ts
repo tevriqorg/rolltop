@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailAIScopeLabel, mailAIFollowUpPrompts, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, latestAssistantVisibleText, mailAIWorkflowTimeline, mailAITimelinePhase, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
+import { mailAIScopeLabel, mailAIFollowUpPrompts, mailAISelectionPrompt, mailAIWorkspaceAvailableScopes, mailAIWorkspaceInitialScope, latestAssistantVisibleText, mailAIWorkflowTimeline, mailAITimelinePhase, mailToolCardKind, mailToolCardSummary, toolActivityLabel, traceResultSummary } from "./MailSideChat";
 
 describe("MailSideChat tool activity", () => {
   it("shows useful mail-search progress instead of raw tool JSON", () => {
@@ -65,6 +65,14 @@ describe("MailSideChat tool activity", () => {
       "把当前线程的待办、负责人和截止时间整理成清单"
     ]);
     expect(mailAIFollowUpPrompts("message", "assistant: 已完成总结")).toHaveLength(3);
+  });
+
+  it("turns a selected mail quote into explicit AI context without sending mail", () => {
+    const prompt = mailAISelectionPrompt({ id: 1, action: "reply", text: "Please confirm by Friday.", messageID: 42 });
+    expect(prompt).toContain("只生成草稿，不发送");
+    expect(prompt).toContain("message #42");
+    expect(prompt).toContain("<selected-mail-text>");
+    expect(prompt).toContain("Please confirm by Friday.");
   });
 
   it("summarizes auditable trace results without requiring reasoning text", () => {
