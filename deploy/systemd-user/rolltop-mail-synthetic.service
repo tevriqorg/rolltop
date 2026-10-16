@@ -1,0 +1,19 @@
+[Unit]
+Description=Rolltop synthetic Gmail-like source
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/work/rolltop-g1
+ExecStart=/usr/bin/python3 /home/ubuntu/work/rolltop-g1/tools/mock-gmail-source/server.py
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:18110/__control__/state >/dev/null && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rolltop-mail-synthetic
+
+[Install]
+WantedBy=default.target
