@@ -79,7 +79,18 @@ const TOOL_LABELS: Record<string, string> = {
   draft_reply: "生成回复草稿",
   add_label: "添加标签",
   archive_message: "归档邮件",
-  mark_read: "修改已读状态"
+  mark_read: "修改已读状态",
+  list_mailboxes: "浏览邮箱文件夹",
+  star: "加星邮件",
+  unstar: "取消星标",
+  move: "移动邮件",
+  snooze: "稍后提醒",
+  trash: "移入垃圾箱",
+  restore: "恢复邮件",
+  create_draft: "保存草稿",
+  reply_mail: "发送回复",
+  forward_mail: "转发邮件",
+  send_mail: "发送邮件"
 };
 
 export function mailAIScopeLabel(scope: ThreadScope) {
@@ -105,7 +116,7 @@ export function toolActivityLabel(name: string, args: unknown, result: unknown, 
   return `${label}完成`;
 }
 
-type MailToolCardKind = "mail-list" | "message" | "thread" | "draft" | "mutation" | "generic";
+type MailToolCardKind = "mail-list" | "mailboxes" | "message" | "thread" | "draft" | "mutation" | "generic";
 
 type MailToolItem = {
   message_id?: number;
@@ -138,16 +149,18 @@ function asMailToolItem(value: unknown): MailToolItem {
 
 export function mailToolCardKind(toolName: string): MailToolCardKind {
   if (toolName === "list_mail" || toolName === "search_mail") return "mail-list";
+  if (toolName === "list_mailboxes") return "mailboxes";
   if (toolName === "get_message") return "message";
   if (toolName === "get_thread") return "thread";
-  if (toolName === "draft_reply") return "draft";
-  if (toolName === "add_label" || toolName === "archive_message" || toolName === "mark_read") return "mutation";
+  if (toolName === "draft_reply" || toolName === "create_draft") return "draft";
+  if (["add_label", "archive_message", "mark_read", "star", "unstar", "move", "snooze", "trash", "restore", "reply_mail", "forward_mail", "send_mail"].includes(toolName)) return "mutation";
   return "generic";
 }
 
 export function mailToolCardSummary(toolName: string, result: unknown) {
   const kind = mailToolCardKind(toolName);
   if ((kind === "mail-list" || kind === "thread") && Array.isArray(result)) return `${result.length} 封邮件`;
+  if (kind === "mailboxes" && Array.isArray(result)) return `${result.length} 个文件夹`;
   if (kind === "message") return asMailToolItem(result).subject || "邮件详情";
   if (kind === "draft") {
     const record = asRecord(result);
@@ -174,6 +187,18 @@ function MailResultList({ result }: { result: unknown }) {
     <span>{[item.from, item.account, item.date].filter(Boolean).join(" · ")}</span>
     {item.body ? <p>{compactToolText(item.body, 120)}</p> : null}
   </article>)}</div>;
+}
+
+function MailboxListCard({ result }: { result: unknown }) {
+  const items = Array.isArray(result) ? result.map(asRecord) : [];
+  if (items.length === 0) return <div className="mail-ai-tool-empty">没有可用文件夹。</div>;
+  return <div className="mail-ai-tool-mail-list">{items.map((item, index) => {
+    const name = typeof item.name === "string" ? item.name : "未命名文件夹";
+    const role = typeof item.role === "string" ? item.role : "";
+    const account = typeof item.account === "string" ? item.account : "";
+    const id = typeof item.mailbox_id === "number" ? item.mailbox_id : index;
+    return <article className="mail-ai-tool-mail" key={id}><strong>{name}</strong><span>{[account, role].filter(Boolean).join(" · ")}</span></article>;
+  })}</div>;
 }
 
 function MailMessageCard({ result }: { result: unknown }) {
@@ -211,10 +236,26 @@ function DraftCard({ result }: { result: unknown }) {
   </article>;
 }
 
+function mailMutationDetail(toolName: string, input: Record<string, unknown>, output: Record<string, unknown>) {
+  if (toolName === "add_label") return `标签：${String(input.label || "")}`;
+  if (toolName === "mark_read") return input.read === false ? "标记为未读" : "标记为已读";
+  if (toolName === "archive_message") return "移出收件箱";
+  if (toolName === "star") return "设为星标邮件";
+  if (toolName === "unstar") return "取消星标";
+  if (toolName === "move") return `目标：${String(input.mailbox || output.mailbox || input.mailbox_id || "指定文件夹")}`;
+  if (toolName === "snooze") return `提醒时间：${String(input.until || output.snoozed_until || "")}`;
+  if (toolName === "trash") return "移入垃圾箱";
+  if (toolName === "restore") return `恢复到：${String(output.mailbox || "收件箱")}`;
+  if (toolName === "reply_mail") return `回复邮件 #${String(input.message_id || "")}`;
+  if (toolName === "forward_mail") return `转发给：${String(input.to || output.to || "")}`;
+  if (toolName === "send_mail") return `收件人：${String(input.to || output.to || "")}${input.subject ? ` · ${String(input.subject)}` : ""}`;
+  return TOOL_LABELS[toolName] || toolName;
+}
+
 function MutationCard({ toolName, args, result }: { toolName: string; args: unknown; result: unknown }) {
   const input = asRecord(args);
   const output = asRecord(result);
-  const detail = toolName === "add_label" ? `标签：${String(input.label || "")}` : toolName === "mark_read" ? (input.read === false ? "标记为未读" : "标记为已读") : "移出收件箱";
+  const detail = mailMutationDetail(toolName, input, output);
   return <div className="mail-ai-tool-mutation"><strong>{TOOL_LABELS[toolName] || toolName}</strong><span>{detail}</span><span className={output.ok === true ? "done" : "pending"}>{output.ok === true ? "已完成" : "等待执行"}</span></div>;
 }
 
@@ -348,7 +389,7 @@ function ToolCard(props: ToolCallMessagePartProps) {
   const pending = approval && approval.approved === undefined && !approval.resolution;
   const kind = mailToolCardKind(toolName);
   const input = asRecord(args);
-  const approvalDetail = toolName === "add_label" ? `添加标签 ${String(input.label || "")}` : toolName === "mark_read" ? (input.read === false ? "标记为未读" : "标记为已读") : toolName === "archive_message" ? "归档邮件" : TOOL_LABELS[toolName] || toolName;
+  const approvalDetail = mailMutationDetail(toolName, input, {});
   return <section className={`mail-ai-tool-card kind-${kind}${isError ? " error" : ""}`}>
     <div className="mail-ai-tool-title">
       <span className="mail-ai-tool-dot" aria-hidden="true" />
@@ -356,6 +397,7 @@ function ToolCard(props: ToolCallMessagePartProps) {
       {!running && result !== undefined ? <span className="mail-ai-tool-summary">{mailToolCardSummary(toolName, result)}</span> : null}
     </div>
     {!running && kind === "mail-list" ? <MailResultList result={result} /> : null}
+    {!running && kind === "mailboxes" ? <MailboxListCard result={result} /> : null}
     {!running && kind === "message" ? <MailMessageCard result={result} /> : null}
     {!running && kind === "thread" ? <MailThreadCard result={result} /> : null}
     {!running && kind === "draft" ? <DraftCard result={result} /> : null}

@@ -3,10 +3,21 @@ export const MAIL_AI_WORKSPACE_TOOLS = Object.freeze([
   'search_mail',
   'get_message',
   'get_thread',
+  'list_mailboxes',
   'draft_reply',
   'add_label',
   'archive_message',
   'mark_read',
+  'star',
+  'unstar',
+  'move',
+  'snooze',
+  'trash',
+  'restore',
+  'create_draft',
+  'reply_mail',
+  'forward_mail',
+  'send_mail',
 ]);
 
 export function mailAIWorkspaceMode(context = {}) {

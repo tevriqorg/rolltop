@@ -79,6 +79,11 @@ function createTools({ userID, context, fallbackQuery }) {
         thread_id: thread_id || context.thread_id,
       }),
     }),
+    list_mailboxes: tool({
+      description: 'List Rolltop mailbox destinations and roles for the current user. Use before move when the destination is not already explicit.',
+      inputSchema: z.object({}),
+      execute: async () => hubTool(userID, 'list_mailboxes', {}),
+    }),
     draft_reply: tool({
       description: 'Create reply draft text only. This never sends email.',
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), body: z.string().trim().min(1) }),
@@ -99,6 +104,56 @@ function createTools({ userID, context, fallbackQuery }) {
       inputSchema: z.object({ message_id: z.number().int().positive().optional(), read: z.boolean() }),
       execute: async ({ message_id, read }) => hubTool(userID, 'mark_read', { message_id: message_id || context.message_id, read }, true),
     }),
+    star: tool({
+      description: 'Star a message through Rolltop mail state. Requires user approval.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
+      execute: async ({ message_id }) => hubTool(userID, 'star', { message_id: message_id || context.message_id }, true),
+    }),
+    unstar: tool({
+      description: 'Remove the star from a message through Rolltop mail state. Requires user approval.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
+      execute: async ({ message_id }) => hubTool(userID, 'unstar', { message_id: message_id || context.message_id }, true),
+    }),
+    move: tool({
+      description: 'Move a message to another mailbox in the same account using Rolltop mail operations. Use list_mailboxes when needed. Requires user approval.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional(), mailbox: z.string().trim().optional(), mailbox_id: z.number().int().positive().optional() }),
+      execute: async ({ message_id, mailbox, mailbox_id }) => hubTool(userID, 'move', { message_id: message_id || context.message_id, ...(mailbox ? { mailbox } : {}), ...(mailbox_id ? { mailbox_id } : {}) }, true),
+    }),
+    snooze: tool({
+      description: 'Snooze a message until an RFC3339 timestamp. Requires user approval.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional(), until: z.string().trim().min(1) }),
+      execute: async ({ message_id, until }) => hubTool(userID, 'snooze', { message_id: message_id || context.message_id, until }, true),
+    }),
+    trash: tool({
+      description: 'Move a message to Trash using the account/provider capability. Requires user approval.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
+      execute: async ({ message_id }) => hubTool(userID, 'trash', { message_id: message_id || context.message_id }, true),
+    }),
+    restore: tool({
+      description: 'Restore a trashed message to Inbox using the account/provider capability. Requires user approval.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional() }),
+      execute: async ({ message_id }) => hubTool(userID, 'restore', { message_id: message_id || context.message_id }, true),
+    }),
+    create_draft: tool({
+      description: 'Create and persist a real Rolltop draft. This never sends the message.',
+      inputSchema: z.object({ to: z.string().trim().optional(), cc: z.string().trim().optional(), bcc: z.string().trim().optional(), subject: z.string().trim().optional(), body: z.string().trim().min(1), from_identity_id: z.number().int().positive().optional() }),
+      execute: async (args) => hubTool(userID, 'create_draft', args),
+    }),
+    reply_mail: tool({
+      description: 'Send a reply using Rolltop server-owned reply recipients, threading and compose pipeline. Requires explicit user approval before execution.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional(), body: z.string().trim().min(1), reply_all: z.boolean().optional() }),
+      execute: async ({ message_id, body, reply_all }) => hubTool(userID, 'reply_mail', { message_id: message_id || context.message_id, body, reply_all: Boolean(reply_all) }, true),
+    }),
+    forward_mail: tool({
+      description: 'Forward a message through Rolltop compose/outbox. Requires explicit user approval before execution.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional(), to: z.string().trim().min(1), cc: z.string().trim().optional(), bcc: z.string().trim().optional(), body: z.string().trim().optional(), include_attachments: z.boolean().optional() }),
+      execute: async ({ message_id, ...args }) => hubTool(userID, 'forward_mail', { message_id: message_id || context.message_id, ...args }, true),
+    }),
+    send_mail: tool({
+      description: 'Send a new email through Rolltop compose/outbox. Requires explicit user approval before execution; never call without confirmed recipients and content.',
+      inputSchema: z.object({ to: z.string().trim().min(1), cc: z.string().trim().optional(), bcc: z.string().trim().optional(), subject: z.string().trim().optional(), body: z.string().trim().min(1), from_identity_id: z.number().int().positive().optional() }),
+      execute: async (args) => hubTool(userID, 'send_mail', args, true),
+    }),
   });
 }
 
@@ -116,7 +171,11 @@ function createAgent(body) {
     stopWhen: isStepCount(6),
     instructions: mailAIWorkspaceInstructions(context),
     tools,
-    toolApproval: { add_label: 'user-approval', archive_message: 'user-approval', mark_read: 'user-approval' },
+    toolApproval: {
+      add_label: 'user-approval', archive_message: 'user-approval', mark_read: 'user-approval',
+      star: 'user-approval', unstar: 'user-approval', move: 'user-approval', snooze: 'user-approval',
+      trash: 'user-approval', restore: 'user-approval', reply_mail: 'user-approval', forward_mail: 'user-approval', send_mail: 'user-approval',
+    },
   });
 }
 async function sendWebResponse(webResponse, res) {

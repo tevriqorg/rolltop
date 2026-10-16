@@ -258,6 +258,9 @@ func (p RemoteMockMailbox) Mutate(ctx context.Context, change Mutation) error {
 	case "trash":
 		add = append(add, "TRASH")
 		remove = append(remove, "INBOX")
+	case "restore":
+		add = append(add, "INBOX")
+		remove = append(remove, "TRASH")
 	case "label":
 		label := strings.TrimSpace(change.Label)
 		if label == "" {

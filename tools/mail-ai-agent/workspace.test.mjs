@@ -19,3 +19,10 @@ test('Agent Workspace requires the complete mail tool catalog', () => {
   assert.equal(assertMailAIWorkspaceTools(fullTools), fullTools);
   assert.throws(() => assertMailAIWorkspaceTools({ search_mail: {} }), /tool contract mismatch/);
 });
+
+
+test('Agent Workspace exposes the complete A9 mail action catalog', () => {
+  for (const name of ['star', 'unstar', 'move', 'snooze', 'trash', 'restore', 'create_draft', 'reply_mail', 'forward_mail', 'send_mail']) {
+    assert.ok(MAIL_AI_WORKSPACE_TOOLS.includes(name), `missing A9 tool ${name}`);
+  }
+});

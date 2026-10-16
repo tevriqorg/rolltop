@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rolltop/backend/blob"
 	"rolltop/backend/mailai"
@@ -153,6 +154,100 @@ func TestMailAIToolsAreServerAuthenticatedTenantScopedAndConfirmMutations(t *tes
 	}
 	if got, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{Label: "ai-confirmed"}); len(got) != 1 {
 		t.Fatalf("confirmed label count=%d", len(got))
+	}
+
+	messageArg := json.RawMessage(`{"message_id":` + strconvInt64(messageID) + `}`)
+	beforeStar, err := st.GetMessageForUser(ctx, owner.ID, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "unstar", Arguments: messageArg}); w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed unstar=%d %s", w.Code, w.Body.String())
+	}
+	if row, err := st.GetMessageForUser(ctx, owner.ID, messageID); err != nil || row.IsStarred != beforeStar.IsStarred {
+		t.Fatalf("star state changed without confirmation before=%t row=%+v err=%v", beforeStar.IsStarred, row, err)
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "unstar", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed unstar=%d %s", w.Code, w.Body.String())
+	}
+	if row, err := st.GetMessageForUser(ctx, owner.ID, messageID); err != nil || row.IsStarred {
+		t.Fatalf("confirmed unstar not persisted row=%+v err=%v", row, err)
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "star", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed star=%d %s", w.Code, w.Body.String())
+	}
+	if row, err := st.GetMessageForUser(ctx, owner.ID, messageID); err != nil || !row.IsStarred {
+		t.Fatalf("confirmed star not persisted row=%+v err=%v", row, err)
+	}
+
+	until := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	snoozeArgs, _ := json.Marshal(map[string]any{"message_id": messageID, "until": until.Format(time.RFC3339)})
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "snooze", Arguments: snoozeArgs}); w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed snooze=%d %s", w.Code, w.Body.String())
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "snooze", Arguments: snoozeArgs, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed snooze=%d %s", w.Code, w.Body.String())
+	}
+	if snooze, err := st.MessageSnoozeForUser(ctx, owner.ID, messageID); err != nil || !snooze.SnoozedUntil.Equal(until) {
+		t.Fatalf("snooze=%+v err=%v want=%s", snooze, err, until)
+	}
+
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "trash", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed trash=%d %s", w.Code, w.Body.String())
+	}
+	if trashed, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{View: "trash"}); len(trashed) == 0 {
+		t.Fatal("trash action did not move the synthetic message into Trash")
+	}
+	if w := request("gate-e-secret", mailai.ToolRequest{UserID: owner.ID, Name: "restore", Arguments: messageArg, Confirmed: true}); w.Code != http.StatusOK {
+		t.Fatalf("confirmed restore=%d %s", w.Code, w.Body.String())
+	}
+	if inbox, _ := hub.Messages(ctx, owner.ID, mailhub.Filter{View: "inbox"}); len(inbox) == 0 {
+		t.Fatal("restore action did not return the synthetic message to Inbox")
+	}
+}
+
+func TestMailAIComposeActionToolsUseRolltopComposeAndApproval(t *testing.T) {
+	ctx := context.Background()
+	server, user, _, _, _ := setupAutocryptComposeTest(t, ctx, false)
+	accounts, err := server.store.ListMailAccountsForUser(ctx, user.ID)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts=%d err=%v", len(accounts), err)
+	}
+	for name, role := range map[string]string{"Sent": "sent", "Drafts": "drafts"} {
+		mailbox, err := server.store.GetOrCreateMailbox(ctx, user.ID, accounts[0].ID, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := server.store.UpdateMailboxSettings(ctx, user.ID, mailbox.ID, store.MailboxSettings{
+			SyncMode: mailbox.SyncMode, Role: role, Icon: mailbox.Icon, ShowInSidebar: true,
+			ShowInAllMail: mailbox.ShowInAllMail, IncludeInSearch: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/mail-ai/tools", nil)
+
+	draftArgs := json.RawMessage(`{"to":"recipient@example.test","subject":"A9 draft","body":"Draft only"}`)
+	draft, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "create_draft", Arguments: draftArgs})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("create_draft status=%d err=%v response=%+v", status, err, draft)
+	}
+	draftResult, ok := draft.Result.(map[string]any)
+	if !ok || draftResult["send"] != false || draftResult["message_id"] == nil {
+		t.Fatalf("create_draft result=%+v", draft.Result)
+	}
+
+	sendArgs := json.RawMessage(`{"to":"recipient@example.test","subject":"A9 send","body":"Approved send"}`)
+	if _, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "send_mail", Arguments: sendArgs}); status != http.StatusConflict || err == nil {
+		t.Fatalf("unconfirmed send status=%d err=%v", status, err)
+	}
+	sent, status, err := server.runMailAITool(req, mailai.ToolRequest{UserID: user.ID, Name: "send_mail", Arguments: sendArgs, Confirmed: true})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("confirmed send status=%d err=%v response=%+v", status, err, sent)
+	}
+	sentResult, ok := sent.Result.(map[string]any)
+	if !ok || sentResult["queued"] != true || sentResult["send_id"] == nil {
+		t.Fatalf("confirmed send did not enter Rolltop outbox: %+v", sent.Result)
 	}
 }
 

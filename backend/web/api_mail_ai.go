@@ -771,11 +771,13 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 			subject = "Re: " + subject
 		}
 		return mailai.ToolResponse{Name: in.Name, Result: map[string]any{"to": context.From, "subject": subject, "body": strings.TrimSpace(args.Body), "send": false}}, 200, nil
-	case "add_label", "archive_message", "mark_read":
+	case "add_label":
 		if !in.Confirmed {
 			return mailai.ToolResponse{}, http.StatusConflict, errors.New("explicit confirmation required")
 		}
 		return s.runConfirmedMockMutation(r, in, hub)
+	case "archive_message", "mark_read", "list_mailboxes", "star", "unstar", "move", "snooze", "trash", "restore", "create_draft", "reply_mail", "forward_mail", "send_mail":
+		return s.runMailAIActionTool(r, in)
 	default:
 		return mailai.ToolResponse{}, 400, errors.New("unsupported mail-ai tool")
 	}

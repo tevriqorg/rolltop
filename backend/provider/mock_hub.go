@@ -106,6 +106,8 @@ func applyMutation(m *Message, change Mutation) error {
 		m.Folders = without(m.Folders, "INBOX")
 	case "trash":
 		m.Folders = []string{"Trash"}
+	case "restore":
+		m.Folders = union(without(m.Folders, "Trash"), []string{"INBOX"})
 	default:
 		return errors.New("unsupported mock mutation")
 	}

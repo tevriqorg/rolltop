@@ -17,6 +17,11 @@ describe("MailSideChat tool activity", () => {
     expect(mailToolCardKind("get_thread")).toBe("thread");
     expect(mailToolCardKind("draft_reply")).toBe("draft");
     expect(mailToolCardKind("archive_message")).toBe("mutation");
+    expect(mailToolCardKind("list_mailboxes")).toBe("mailboxes");
+    expect(mailToolCardKind("create_draft")).toBe("draft");
+    expect(mailToolCardKind("send_mail")).toBe("mutation");
+    expect(mailToolCardKind("trash")).toBe("mutation");
+    expect(mailToolCardSummary("list_mailboxes", [{ name: "INBOX" }, { name: "Trash" }])).toBe("2 个文件夹");
     expect(mailToolCardSummary("search_mail", [{ subject: "A" }, { subject: "B" }])).toBe("2 封邮件");
     expect(mailToolCardSummary("draft_reply", { subject: "Re: 项目" })).toBe("Re: 项目");
     expect(mailToolCardSummary("archive_message", { ok: true })).toBe("已完成");
