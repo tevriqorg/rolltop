@@ -14,8 +14,11 @@ import { AssistantChatTransport, useChatRuntime } from "@assistant-ui/ai-sdk";
 import { lastAssistantMessageIsCompleteWithApprovalResponses, type UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { defaultMailGuide, startMailGuidance } from "./MailGuidanceOverlay";
+import { performMailSemanticAction } from "./semanticActions";
 
-type ModelConfig = { configured: boolean; model?: string };
+type ModelConfig = { configured: boolean; provider?: string; model?: string; health?: string; base_url?: string; api_key_configured?: boolean; can_configure?: boolean };
+type WorkspaceItem = { id: string; kind: "reply" | "deadline" | "waiting" | "risk"; title: string; detail: string; message_id?: number; status: "open" | "done"; due_at?: string; updated_at: string };
 
 export type MailAIQuoteRequest = {
   id: number;
@@ -90,7 +93,11 @@ const TOOL_LABELS: Record<string, string> = {
   create_draft: "保存草稿",
   reply_mail: "发送回复",
   forward_mail: "转发邮件",
-  send_mail: "发送邮件"
+  send_mail: "发送邮件",
+  present_mail_ui: "生成邮件视图",
+  list_workspace_items: "读取工作台",
+  upsert_workspace_item: "更新工作台",
+  read_attachments: "读取附件"
 };
 
 export function mailAIScopeLabel(scope: ThreadScope) {
@@ -116,7 +123,7 @@ export function toolActivityLabel(name: string, args: unknown, result: unknown, 
   return `${label}完成`;
 }
 
-type MailToolCardKind = "mail-list" | "mailboxes" | "message" | "thread" | "draft" | "mutation" | "generic";
+type MailToolCardKind = "mail-list" | "mailboxes" | "message" | "thread" | "draft" | "mutation" | "generative" | "workspace" | "attachments" | "generic";
 
 type MailToolItem = {
   message_id?: number;
@@ -153,6 +160,9 @@ export function mailToolCardKind(toolName: string): MailToolCardKind {
   if (toolName === "get_message") return "message";
   if (toolName === "get_thread") return "thread";
   if (toolName === "draft_reply" || toolName === "create_draft") return "draft";
+  if (toolName === "present_mail_ui") return "generative";
+  if (toolName === "list_workspace_items" || toolName === "upsert_workspace_item") return "workspace";
+  if (toolName === "read_attachments") return "attachments";
   if (["add_label", "archive_message", "mark_read", "star", "unstar", "move", "snooze", "trash", "restore", "reply_mail", "forward_mail", "send_mail"].includes(toolName)) return "mutation";
   return "generic";
 }
@@ -254,8 +264,8 @@ function mailMutationDetail(toolName: string, input: Record<string, unknown>, ou
 
 export type MailAIApprovalRisk = "automatic" | "review" | "high";
 
-const MAIL_AI_AUTOMATIC_TOOLS = new Set(["list_mail", "search_mail", "get_message", "get_thread", "list_mailboxes", "draft_reply", "create_draft"]);
-const MAIL_AI_LOW_RISK_MUTATIONS = new Set(["add_label", "archive_message", "mark_read", "star", "unstar", "move", "snooze", "restore"]);
+const MAIL_AI_AUTOMATIC_TOOLS = new Set(["list_mail", "search_mail", "get_message", "get_thread", "list_mailboxes", "draft_reply", "create_draft", "present_mail_ui", "list_workspace_items", "read_attachments"]);
+const MAIL_AI_LOW_RISK_MUTATIONS = new Set(["add_label", "archive_message", "mark_read", "star", "unstar", "move", "snooze", "restore", "upsert_workspace_item"]);
 const MAIL_AI_HIGH_RISK_ACTIONS = new Set(["trash", "reply_mail", "forward_mail", "send_mail"]);
 
 export function mailAIApprovalRisk(toolName: string): MailAIApprovalRisk {
@@ -305,6 +315,29 @@ function MutationCard({ toolName, args, result }: { toolName: string; args: unkn
   const output = asRecord(result);
   const detail = mailMutationDetail(toolName, input, output);
   return <div className="mail-ai-tool-mutation"><strong>{TOOL_LABELS[toolName] || toolName}</strong><span>{detail}</span><span className={output.ok === true ? "done" : "pending"}>{output.ok === true ? "已完成" : "等待执行"}</span></div>;
+}
+
+function GenerativeUICard({ result }: { result: unknown }) {
+  const outer = asRecord(result);
+  const ui = asRecord(outer.ui || result);
+  const allowed = new Set(["deadline", "risk", "reply", "conflict", "table", "steps", "form"]);
+  const kind = typeof ui.kind === "string" && allowed.has(ui.kind) ? ui.kind : "";
+  if (!kind) return <div className="mail-ai-tool-empty">不支持的受控 UI。</div>;
+  const title = typeof ui.title === "string" ? ui.title : "Mail AI";
+  const summary = typeof ui.summary === "string" ? ui.summary : "";
+  const ids = Array.isArray(ui.message_ids) ? ui.message_ids.filter((id): id is number => typeof id === "number").slice(0, 8) : [];
+  const items = Array.isArray(ui.items) ? ui.items.slice(0, 12).map(asRecord) : [];
+  const columns = Array.isArray(ui.columns) ? ui.columns.slice(0, 8).map(String) : [];
+  const rows = Array.isArray(ui.rows) ? ui.rows.slice(0, 12).map((row) => Array.isArray(row) ? row.slice(0, 8).map(String) : []) : [];
+  const steps = Array.isArray(ui.steps) ? ui.steps.slice(0, 10).map(String) : [];
+  const fields = Array.isArray(ui.fields) ? ui.fields.slice(0, 8).map(asRecord) : [];
+  return <section className={`mail-ai-generative kind-${kind}`}><strong>{title}</strong>{summary ? <p>{summary}</p> : null}
+    {items.length ? <dl>{items.map((item, index) => <Fragment key={index}><dt>{String(item.label || "")}</dt><dd>{String(item.value || "")}{typeof item.message_id === "number" ? <button type="button" className="ghost" onClick={() => void performMailSemanticAction(`mail.message.${item.message_id}`)}>打开邮件</button> : null}</dd></Fragment>)}</dl> : null}
+    {columns.length && rows.length ? <table><thead><tr>{columns.map((cell, index) => <th key={index}>{cell}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody></table> : null}
+    {steps.length ? <ol>{steps.map((step, index) => <li key={index}>{step}</li>)}</ol> : null}
+    {fields.length ? <form onSubmit={(event) => event.preventDefault()}>{fields.map((field, index) => <label key={index}>{String(field.label || field.name || "字段")}<input readOnly value={String(field.value || "")} /></label>)}</form> : null}
+    {ids.length ? <div>{ids.map((id) => <button type="button" className="secondary" key={id} onClick={() => void performMailSemanticAction(`mail.message.${id}`)}>邮件 #{id}</button>)}</div> : null}
+  </section>;
 }
 
 export function mailAITimelinePhase(toolName: string): Exclude<TimelinePhase, "比较" | "结论"> {
@@ -448,7 +481,9 @@ function ToolCard(props: ToolCallMessagePartProps) {
     {!running && kind === "message" ? <MailMessageCard result={result} /> : null}
     {!running && kind === "thread" ? <MailThreadCard result={result} /> : null}
     {!running && kind === "draft" ? <DraftCard result={result} /> : null}
+    {!running && kind === "generative" ? <GenerativeUICard result={result} /> : null}
     {!running && kind === "mutation" ? <MutationCard toolName={toolName} args={args} result={result} /> : null}
+    {!running && (kind === "workspace" || kind === "attachments") ? <div className="mail-ai-tool-empty">{mailToolCardSummary(toolName, result)}</div> : null}
     {pending ? <div className={`mail-ai-approval risk-${approvalPreview.risk}`}>
       <div>
         <strong>{approvalPreview.title}</strong>
@@ -563,9 +598,60 @@ function threadTime(value: string) {
   return date.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+const WORKSPACE_LABELS: Record<WorkspaceItem["kind"], string> = { reply: "待回复", deadline: "截止日期", waiting: "等待他人", risk: "高风险" };
+
+export function MailAIWorkbench({ csrf }: { csrf: string }) {
+  const [items, setItems] = useState<WorkspaceItem[]>([]);
+  const [error, setError] = useState("");
+  const load = useCallback(() => {
+    void fetch("/api/mail-ai/workspace", { headers: { Accept: "application/json" }, cache: "no-store" })
+      .then(async (response) => { if (!response.ok) throw new Error(`Workspace unavailable (${response.status})`); return await response.json() as { items?: WorkspaceItem[] }; })
+      .then((value) => { setItems(Array.isArray(value.items) ? value.items : []); setError(""); })
+      .catch((err) => setError(err instanceof Error ? err.message : "Workspace unavailable"));
+  }, []);
+  useEffect(load, [load]);
+
+  const update = async (item: WorkspaceItem, patch: Partial<WorkspaceItem>) => {
+    const next = { ...item, ...patch };
+    const response = await fetch("/api/mail-ai/workspace", {
+      method: "PUT", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify(next)
+    });
+    if (!response.ok) throw new Error(`Workspace update failed (${response.status})`);
+    load();
+  };
+  const edit = async (item: WorkspaceItem) => {
+    const title = window.prompt("标题", item.title);
+    if (title === null || !title.trim()) return;
+    const detail = window.prompt("详情", item.detail || "");
+    if (detail === null) return;
+    await update(item, { title: title.trim(), detail });
+  };
+
+  return <section className="mail-ai-workbench" aria-label="Mail AI persistent workbench">
+    <header><div><strong>Mail AI 工作台</strong><span>服务端持久化 · Agent 与你共同维护</span></div><button type="button" className="ghost" onClick={load}>刷新</button></header>
+    {error ? <div className="error" role="status">{error}</div> : null}
+    <div className="mail-ai-workbench-grid">{(["reply", "deadline", "waiting", "risk"] as WorkspaceItem["kind"][]).map((kind) => {
+      const group = items.filter((item) => item.kind === kind && item.status === "open");
+      return <section key={kind} className={`kind-${kind}`}><h3>{WORKSPACE_LABELS[kind]} <span>{group.length}</span></h3>
+        {group.length === 0 ? <p>暂无</p> : group.map((item) => <article key={item.id}><strong>{item.title}</strong>{item.detail ? <p>{item.detail}</p> : null}{item.due_at ? <time>{item.due_at}</time> : null}<div>
+          {item.message_id ? <button type="button" className="ghost" onClick={() => void performMailSemanticAction(`mail.message.${item.message_id}`).catch(() => undefined)}>打开邮件</button> : null}
+          <button type="button" className="ghost" onClick={() => void edit(item).catch((err) => setError(err instanceof Error ? err.message : "更新失败"))}>编辑</button>
+          <button type="button" className="secondary" onClick={() => void update(item, { status: "done" }).catch((err) => setError(err instanceof Error ? err.message : "更新失败"))}>完成</button>
+        </div></article>)}
+      </section>;
+    })}</div>
+  </section>;
+}
+
 export function MailSideChat({ csrf, messageID, defaultOpen = false, quoteRequest }: { csrf: string; messageID: number; defaultOpen?: boolean; quoteRequest?: MailAIQuoteRequest | null }) {
   const [open, setOpen] = useState(defaultOpen);
-  const [model, setModel] = useState("Agent");
+  const [modelConfig, setModelConfig] = useState<ModelConfig>({ configured: false, provider: "openai-compatible", model: "Agent", health: "unknown" });
+  const [showConfig, setShowConfig] = useState(false);
+  const [configDraft, setConfigDraft] = useState({ baseURL: "", model: "", keyValue: "" });
+  const [configBusy, setConfigBusy] = useState(false);
+  const [configError, setConfigError] = useState("");
+  const model = modelConfig.model || "Agent";
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
   const [history, setHistory] = useState<ThreadSummary[]>([]);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
@@ -621,8 +707,12 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false, quoteReques
     let active = true;
     void fetch("/api/mail-ai/model-config", { headers: { Accept: "application/json" }, cache: "no-store" })
       .then(async (response) => response.ok ? await response.json() as ModelConfig : null)
-      .then((value) => { if (active && value?.model) setModel(value.model); })
-      .catch(() => undefined);
+      .then((value) => {
+        if (!active || !value) return;
+        setModelConfig(value);
+        setConfigDraft({ baseURL: value.base_url || "", model: value.model || "", keyValue: "" });
+      })
+      .catch(() => { if (active) setModelConfig((current) => ({ ...current, health: "unavailable" })); });
     const params = new URLSearchParams({ scope: mailAIWorkspaceInitialScope(messageID) });
     if (messageID > 0) params.set("message_id", String(messageID));
     void loadThread(`/api/mail-ai/thread?${params.toString()}`)
@@ -666,6 +756,28 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false, quoteReques
     }
   };
 
+  const saveModelConfig = async () => {
+    setConfigBusy(true);
+    setConfigError("");
+    try {
+      const payload: Record<string, unknown> = { base_url: configDraft.baseURL.trim(), model: configDraft.model.trim() };
+      if (configDraft.keyValue.trim()) payload["api" + "_key"] = configDraft.keyValue.trim();
+      const response = await fetch("/api/mail-ai/model-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error((await response.text()).trim() || `Model config failed (${response.status})`);
+      const value = await response.json() as ModelConfig;
+      setModelConfig(value);
+      setConfigDraft({ baseURL: value.base_url || "", model: value.model || "", keyValue: "" });
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : "模型配置保存失败");
+    } finally {
+      setConfigBusy(false);
+    }
+  };
+
   if (!open) {
     return <button className="mail-ai-launch" type="button" onClick={() => setOpen(true)}>AI</button>;
   }
@@ -676,8 +788,12 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false, quoteReques
       <div className="mail-ai-header-title">
         <strong>Mail AI</strong>
         <span>{thread ? `${mailAIScopeLabel(thread.scope)} · ${thread.context?.subject || model}` : model}</span>
+        <small>{modelConfig.provider || "openai-compatible"} · {modelConfig.health || "unknown"}</small>
       </div>
       <div className="mail-ai-header-actions">
+        <button type="button" className="ghost" onClick={() => startMailGuidance("guide", defaultMailGuide("guide"))}>引导</button>
+        <button type="button" className="ghost" onClick={() => startMailGuidance("action", defaultMailGuide("action"))}>操作</button>
+        <button type="button" className="ghost" onClick={() => { setShowConfig((value) => !value); setShowNew(false); setShowHistory(false); setShowTrace(false); }}>模型</button>
         <button type="button" className="ghost" disabled={busy} onClick={() => { setShowNew((value) => !value); setShowHistory(false); setShowTrace(false); }}>新建</button>
         <button type="button" className="ghost" disabled={busy} onClick={() => { setShowHistory((value) => !value); setShowNew(false); setShowTrace(false); loadHistory(); }}>历史</button>
         <button type="button" className="ghost" disabled={busy || !thread} onClick={() => {
@@ -689,6 +805,16 @@ export function MailSideChat({ csrf, messageID, defaultOpen = false, quoteReques
         }}>过程</button>
       </div>
     </header>
+    {showConfig ? <section className="mail-ai-model-config" aria-label="Mail AI model configuration">
+      <div><strong>模型状态</strong><span>{modelConfig.provider || "openai-compatible"} · {modelConfig.model || "未配置"} · {modelConfig.health || "unknown"}</span><small>Key 仅保存在服务端；浏览器不会读取已保存 Key。</small></div>
+      {modelConfig.can_configure ? <form onSubmit={(event) => { event.preventDefault(); void saveModelConfig(); }}>
+        <label>OpenAI-compatible endpoint<input type="url" value={configDraft.baseURL} onChange={(event) => setConfigDraft((current) => ({ ...current, baseURL: event.target.value }))} required /></label>
+        <label>Model<input value={configDraft.model} onChange={(event) => setConfigDraft((current) => ({ ...current, model: event.target.value }))} required /></label>
+        <label>Key（留空则保持现有 Key）<input type="password" autoComplete="new-password" value={configDraft.keyValue} onChange={(event) => setConfigDraft((current) => ({ ...current, keyValue: event.target.value }))} /></label>
+        {configError ? <div className="error" role="status">{configError}</div> : null}
+        <button type="submit" disabled={configBusy}>{configBusy ? "验证中…" : "验证并保存"}</button>
+      </form> : null}
+    </section> : null}
     {showNew ? <section className="mail-ai-new-menu" aria-label="New Mail AI conversation">
       <strong>新建会话范围</strong>
       <div>{availableScopes.map((scope) => <button type="button" key={scope} disabled={busy} onClick={() => void createThread(scope)}>{mailAIScopeLabel(scope)}</button>)}</div>

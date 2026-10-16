@@ -540,6 +540,7 @@ func currentUserMigrationSetsForUpgradeTest() []migrationSet {
 		userAccountConnectorMigrationSet(),
 		userMailAIConversationMigrationSet(),
 		userMailAIConversationScopeMigrationSet(),
+		userMailAIWorkspaceMigrationSet(),
 	)
 }
 

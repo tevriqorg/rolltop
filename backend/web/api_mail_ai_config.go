@@ -13,8 +13,10 @@ import (
 
 type mailAIModelConfig struct {
 	Configured       bool   `json:"configured"`
+	Provider         string `json:"provider"`
 	BaseURL          string `json:"base_url"`
 	Model            string `json:"model"`
+	Health           string `json:"health"`
 	APIKeyConfigured bool   `json:"api_key_configured"`
 	CanConfigure     bool   `json:"can_configure,omitempty"`
 }

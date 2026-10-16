@@ -1,10 +1,10 @@
 export const MAIL_AI_AUTOMATIC_TOOLS = Object.freeze([
   'list_mail', 'search_mail', 'get_message', 'get_thread', 'list_mailboxes',
-  'draft_reply', 'create_draft',
+  'draft_reply', 'create_draft', 'present_mail_ui', 'list_workspace_items', 'read_attachments',
 ]);
 
 export const MAIL_AI_LOW_RISK_MUTATIONS = Object.freeze([
-  'add_label', 'archive_message', 'mark_read', 'star', 'unstar', 'move', 'snooze', 'restore',
+  'add_label', 'archive_message', 'mark_read', 'star', 'unstar', 'move', 'snooze', 'restore', 'upsert_workspace_item',
 ]);
 
 export const MAIL_AI_HIGH_RISK_ACTIONS = Object.freeze([

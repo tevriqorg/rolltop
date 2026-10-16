@@ -32,6 +32,7 @@ import {
 } from "../../lib/androidNative";
 import type { AndroidContactAccess, NativeContactEmail } from "../../lib/androidNative";
 import type { RuntimePlugin } from "../../plugins/runtime";
+import { registerMailSemanticAction, semanticString } from "../mail/semanticActions";
 import { useComposeSecurity } from "../../plugins/composeSecurity";
 import type { ComposeSecurityUnlockState, OpenComposeSecurityUnlock } from "../../plugins/composeSecurity";
 
@@ -276,6 +277,21 @@ export function ComposeBox({
   const baselineRef = useRef<LocalComposeContent | null>(null);
   const baselineAttachmentStateRef = useRef("");
   const nativeShareID = !inline ? new URLSearchParams(window.location.search).get("android_share") || "" : "";
+
+  useEffect(() => {
+    const dispose = [
+      registerMailSemanticAction({ name: "compose.to", description: "Set compose recipients", risk: "review", target: () => formRef.current, run: (input) => setForm((current) => ({ ...current, to: semanticString(input, "value") || semanticString(input, "to") })) }),
+      registerMailSemanticAction({ name: "compose.subject", description: "Set compose subject", risk: "review", target: () => formRef.current, run: (input) => setForm((current) => ({ ...current, subject: semanticString(input, "value") || semanticString(input, "subject") })) }),
+      registerMailSemanticAction({ name: "compose.body", description: "Set compose body", risk: "review", target: () => editorRef.current, run: (input) => {
+        const value = semanticString(input, "value") || semanticString(input, "body");
+        if (editorRef.current) editorRef.current.innerText = value;
+        setEditorRevision((current) => current + 1);
+      } }),
+      registerMailSemanticAction({ name: "compose.send", description: "Send the composed message", risk: "high", target: () => formRef.current, run: () => formRef.current?.requestSubmit() })
+    ];
+    return () => dispose.forEach((fn) => fn());
+  }, []);
+
   const localComposeContext = useMemo(
     () => composeLocalContext(recoveryContext, initial, inline),
     [recoveryContext, initial.draft_message_id, initial.in_reply_to_id, inline]

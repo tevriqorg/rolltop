@@ -30,11 +30,11 @@ test('Agent Workspace exposes the complete A9 mail action catalog', () => {
 
 
 test('A10 risk-tiered approval policy is conservative by default', () => {
-  for (const name of ['list_mail', 'search_mail', 'get_message', 'get_thread', 'list_mailboxes', 'draft_reply', 'create_draft']) {
+  for (const name of ['list_mail', 'search_mail', 'get_message', 'get_thread', 'list_mailboxes', 'draft_reply', 'create_draft', 'present_mail_ui', 'list_workspace_items', 'read_attachments']) {
     assert.equal(mailAIToolRisk(name), 'automatic');
     assert.equal(mailAIToolApprovalStatus(name), undefined);
   }
-  for (const name of ['star', 'unstar', 'move', 'snooze', 'restore', 'add_label', 'archive_message', 'mark_read']) {
+  for (const name of ['star', 'unstar', 'move', 'snooze', 'restore', 'add_label', 'archive_message', 'mark_read', 'upsert_workspace_item']) {
     assert.equal(mailAIToolRisk(name), 'review');
     assert.equal(mailAIToolApprovalStatus(name), 'user-approval');
     assert.equal(mailAIToolApprovalStatus(name, 'automatic'), undefined);

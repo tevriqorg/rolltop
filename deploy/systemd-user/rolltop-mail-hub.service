@@ -1,0 +1,20 @@
+[Unit]
+Description=Rolltop Mail Hub v0.3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/work/rolltop-g1
+EnvironmentFile=/home/ubuntu/.config/rolltop/mail-hub.env
+ExecStart=/home/ubuntu/work/rolltop-g1/build-g1/rolltop
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -sS --max-time 2 http://127.0.0.1:18090/ >/dev/null && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rolltop-mail-hub
+
+[Install]
+WantedBy=default.target

@@ -1,5 +1,7 @@
 import http from 'node:http';
 import { Readable } from 'node:stream';
+import { readFile, mkdir, writeFile, rename, chmod } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { ToolLoopAgent, createAgentUIStreamResponse, isStepCount, tool } from 'ai';
 import { z } from 'zod';
@@ -11,11 +13,13 @@ const [host, portText] = addr.split(':');
 const port = Number(portText || '18091');
 const hubURL = (process.env.MAIL_AI_HUB_URL || 'http://127.0.0.1:18090').replace(/\/$/, '');
 const shared = process.env.MAIL_AI_SHARED_TOKEN || '';
+const modelConfigFile = String(process.env.MAIL_AI_MODEL_CONFIG_FILE || '').trim();
 let modelConfig = {
   baseURL: (process.env.MAIL_AI_MODEL_BASE_URL || '').replace(/\/$/, ''),
   model: process.env.MAIL_AI_MODEL || '',
   apiKey: process.env.MAIL_AI_MODEL_API_KEY || '',
 };
+let modelHealth = modelConfig.baseURL && modelConfig.model ? 'unknown' : 'unconfigured';
 
 function authorized(req) {
   return shared && req.headers.authorization === `Bearer ${shared}`;
@@ -155,6 +159,45 @@ function createTools({ userID, context, fallbackQuery }) {
       inputSchema: z.object({ to: z.string().trim().min(1), cc: z.string().trim().optional(), bcc: z.string().trim().optional(), subject: z.string().trim().optional(), body: z.string().trim().min(1), from_identity_id: z.number().int().positive().optional() }),
       execute: async (args) => hubTool(userID, 'send_mail', args, true),
     }),
+    present_mail_ui: tool({
+      description: 'Present a safe Mail AI UI component. Only the fixed vocabulary is allowed; never emit HTML or executable UI.',
+      inputSchema: z.object({
+        kind: z.enum(['deadline', 'risk', 'reply', 'conflict', 'table', 'steps', 'form']),
+        title: z.string().trim().min(1).max(160), summary: z.string().trim().max(1200).optional(),
+        message_ids: z.array(z.number().int().positive()).max(8).optional(),
+        items: z.array(z.object({ label: z.string().max(160), value: z.string().max(500), message_id: z.number().int().positive().optional() })).max(12).optional(),
+        columns: z.array(z.string().max(80)).max(8).optional(), rows: z.array(z.array(z.string().max(240)).max(8)).max(12).optional(),
+        steps: z.array(z.string().max(400)).max(10).optional(),
+        fields: z.array(z.object({ name: z.string().max(80), label: z.string().max(120), type: z.enum(['text', 'date', 'select']), value: z.string().max(400).optional() })).max(8).optional(),
+      }),
+      execute: async (ui) => ({ ok: true, ui }),
+    }),
+    list_workspace_items: tool({
+      description: 'List the persistent Mail AI home workbench items: replies, deadlines, waiting-on-others, and risks.',
+      inputSchema: z.object({}), execute: async () => hubTool(userID, 'list_workspace_items', {}),
+    }),
+    upsert_workspace_item: tool({
+      description: 'Create or update one persistent Mail AI workbench item. This visible mutation follows the low-risk approval policy.',
+      inputSchema: z.object({ id: z.string().trim().optional(), kind: z.enum(['reply', 'deadline', 'waiting', 'risk']), title: z.string().trim().min(1).max(240), detail: z.string().max(4000).optional(), message_id: z.number().int().positive().optional(), status: z.enum(['open', 'done']).optional(), due_at: z.string().max(80).optional() }),
+      execute: async (args) => hubTool(userID, 'upsert_workspace_item', args, true),
+    }),
+    read_attachments: tool({
+      description: 'Read attachment content only on demand. Omit attachment_ids to list bounded metadata first; at most 3 explicit attachments may be read.',
+      inputSchema: z.object({ message_id: z.number().int().positive().optional(), attachment_ids: z.array(z.number().int().positive()).max(3).optional() }),
+      execute: async ({ message_id, attachment_ids }) => hubTool(userID, 'read_attachments', { message_id: message_id || context.message_id, ...(attachment_ids ? { attachment_ids } : {}) }),
+      toModelOutput: ({ output }) => {
+        const result = output?.result || output;
+        const attachments = Array.isArray(result?.attachments) ? result.attachments : [];
+        const parts = [];
+        for (const item of attachments) {
+          if (item?.text) parts.push({ type: 'text', text: `Attachment ${item.filename || item.id}:\n${item.text}` });
+          if (item?.data && String(item.content_type || '').startsWith('image/')) {
+            parts.push({ type: 'file', data: { type: 'data', data: item.data }, mediaType: item.content_type, filename: item.filename || undefined });
+          }
+        }
+        return parts.length ? { type: 'content', value: parts } : { type: 'json', value: result ?? null };
+      },
+    }),
   });
 }
 
@@ -182,30 +225,75 @@ async function sendWebResponse(webResponse, res) {
   Readable.fromWeb(webResponse.body).pipe(res);
 }
 
-async function validateConfig(next) {
-  const baseURL = String(next.base_url || '').replace(/\/$/, '');
-  const model = String(next.model || '').trim();
-  if (!baseURL || !model) throw new Error('base_url and model are required');
-  const headers = next.api_key ? { authorization: `Bearer ${next.api_key}` } : {};
-  const response = await fetch(`${baseURL}/models`, { headers, redirect: 'manual' });
+function normalizeConfigValues(baseURL, model) {
+  const normalizedURL = String(baseURL || '').replace(/\/$/, '').trim();
+  const normalizedModel = String(model || '').trim();
+  if (!normalizedURL || !normalizedModel) throw new Error('base_url and model are required');
+  const parsed = new URL(normalizedURL);
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('base_url must be an absolute http(s) URL without credentials, query, or fragment');
+  }
+  return { baseURL: normalizedURL, model: normalizedModel };
+}
+
+async function probeConfig(candidate, timeoutMs = 4000) {
+  const headers = candidate.apiKey ? { authorization: `Bearer ${candidate.apiKey}` } : {};
+  const response = await fetch(`${candidate.baseURL}/models`, { headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`model endpoint /models returned HTTP ${response.status}`);
   const payload = await response.json();
   const ids = Array.isArray(payload?.data) ? payload.data.map(x => String(x?.id || '')) : [];
-  if (!ids.includes(model)) throw new Error(`model ${model} was not returned by /models`);
-  modelConfig = { baseURL, model, apiKey: next.clear_api_key ? '' : (next.api_key ?? modelConfig.apiKey) };
+  if (!ids.includes(candidate.model)) throw new Error(`model ${candidate.model} was not returned by /models`);
+}
+
+async function persistConfig(candidate) {
+  if (!modelConfigFile) return;
+  await mkdir(dirname(modelConfigFile), { recursive: true, mode: 0o700 });
+  const temp = `${modelConfigFile}.${process.pid}.tmp`;
+  await writeFile(temp, JSON.stringify({ base_url: candidate.baseURL, model: candidate.model, api_key: candidate.apiKey }) + '\n', { mode: 0o600 });
+  await chmod(temp, 0o600);
+  await rename(temp, modelConfigFile);
+  await chmod(modelConfigFile, 0o600);
+}
+
+async function loadPersistedConfig() {
+  if (!modelConfigFile) return;
+  try {
+    const stored = JSON.parse(await readFile(modelConfigFile, 'utf8'));
+    const normalized = normalizeConfigValues(stored.base_url, stored.model);
+    modelConfig = { ...normalized, apiKey: String(stored.api_key || '') };
+    modelHealth = 'unknown';
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
+async function validateConfig(next) {
+  const normalized = normalizeConfigValues(next.base_url, next.model);
+  const candidate = { ...normalized, apiKey: next.clear_api_key ? '' : String(next.api_key ?? modelConfig.apiKey ?? '') };
+  await probeConfig(candidate);
+  await persistConfig(candidate);
+  modelConfig = candidate;
+  modelHealth = 'healthy';
+}
+
+async function refreshModelHealth() {
+  if (!modelConfig.baseURL || !modelConfig.model) return modelHealth = 'unconfigured';
+  try { await probeConfig(modelConfig, 2500); return modelHealth = 'healthy'; }
+  catch { return modelHealth = 'unavailable'; }
 }
 
 function publicConfig() {
-  return { configured: Boolean(modelConfig.baseURL && modelConfig.model), base_url: modelConfig.baseURL, model: modelConfig.model, api_key_configured: Boolean(modelConfig.apiKey) };
+  return { configured: Boolean(modelConfig.baseURL && modelConfig.model), provider: 'openai-compatible', base_url: modelConfig.baseURL, model: modelConfig.model, health: modelHealth, api_key_configured: Boolean(modelConfig.apiKey) };
 }
 const server = http.createServer(async (req, res) => {
   try {
     if (req.url === '/healthz' && req.method === 'GET') {
       res.setHeader('content-type', 'application/json');
-      return res.end(JSON.stringify({ ok: true, configured: publicConfig().configured, model: modelConfig.model, runtime: 'ai-sdk-tool-loop-agent' }));
+      return res.end(JSON.stringify({ ok: true, configured: publicConfig().configured, model: modelConfig.model, health: modelHealth, runtime: 'ai-sdk-tool-loop-agent' }));
     }
     if (!authorized(req)) { res.statusCode = 401; return res.end('unauthorized'); }
     if (req.url === '/config' && req.method === 'GET') {
+      await refreshModelHealth();
       res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify(publicConfig()));
     }
     if (req.url === '/config' && req.method === 'PUT') {
@@ -231,4 +319,5 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+await loadPersistedConfig();
 server.listen(port, host, () => console.log(`mail-ai-agent listening on ${host}:${port}`));

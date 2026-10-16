@@ -34,6 +34,10 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
+	if path == "mail-ai/workspace" {
+		s.apiMailAIWorkspace(w, r, cu)
+		return
+	}
 	if path == "mail-ai/status" {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -776,6 +780,16 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 			return mailai.ToolResponse{}, http.StatusConflict, errors.New("explicit confirmation required")
 		}
 		return s.runConfirmedMockMutation(r, in, hub)
+	case "list_workspace_items":
+		items, err := s.store.ListMailAIWorkspaceItems(r.Context(), in.UserID, 100)
+		if err != nil {
+			return mailai.ToolResponse{}, 500, err
+		}
+		return mailai.ToolResponse{Name: in.Name, Result: items}, 200, nil
+	case "upsert_workspace_item":
+		return s.runMailAIWorkspaceTool(r, in)
+	case "read_attachments":
+		return s.runMailAIAttachmentTool(r, in)
 	case "archive_message", "mark_read", "list_mailboxes", "star", "unstar", "move", "snooze", "trash", "restore", "create_draft", "reply_mail", "forward_mail", "send_mail":
 		return s.runMailAIActionTool(r, in)
 	default:

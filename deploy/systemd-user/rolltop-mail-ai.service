@@ -1,0 +1,21 @@
+[Unit]
+Description=Rolltop Mail AI sidecar v0.3
+After=network-online.target rolltop-mail-hub.service
+Wants=network-online.target rolltop-mail-hub.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/work/rolltop-g1
+EnvironmentFile=/home/ubuntu/.config/rolltop/mail-ai.env
+Environment=MAIL_AI_MODEL_CONFIG_FILE=/home/ubuntu/.config/rolltop/mail-ai-model.json
+ExecStart=/usr/bin/node /home/ubuntu/work/rolltop-g1/tools/mail-ai-agent/server.mjs
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:18091/healthz >/dev/null && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rolltop-mail-ai
+
+[Install]
+WantedBy=default.target

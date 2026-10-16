@@ -27,7 +27,8 @@ import { messageSecurityIndicators, messageSecurityPreviewText, messageSecurityS
 import type { RuntimePlugin } from "../../plugins/runtime";
 import { defaultSwipePreferences, swipeActionPresentation, swipeSnoozeUntil } from "../../lib/swipeActions";
 import { SnoozeControl } from "./SnoozeControl";
-import { MailSideChat } from "./MailSideChat";
+import { MailAIWorkbench, MailSideChat } from "./MailSideChat";
+import { registerMailSemanticAction } from "./semanticActions";
 
 type SearchActionPlugin = RuntimePlugin & {
   renderSearchActions?: (context: {
@@ -391,7 +392,7 @@ export function MailView({
           loading: listPending
         }}
       />
-      {!mailbox ? <MailSideChat csrf={csrf} messageID={0} defaultOpen /> : null}
+      {!mailbox ? <><MailAIWorkbench csrf={csrf} /><MailSideChat csrf={csrf} messageID={0} defaultOpen /></> : null}
       <div
         className={`mail-pull-refresh${pullRefresh.distance > 0 ? " pulling" : ""}${pullRefresh.ready ? " ready" : ""}${pullRefreshing ? " refreshing" : ""}`}
         ref={pullRefresh.targetRef}
@@ -1178,6 +1179,21 @@ export function MessageList({
   const selectedDragAccountIDs = uniquePositiveIDs(selectedDragItems.flatMap(conversationTransferAccountIDs));
 
   keyboardIndexRef.current = keyboardIndex;
+
+  useEffect(() => {
+    const dispose = visible.map((conversation) => {
+      const id = conversation.message.id;
+      const href = messageURL(id, searchQuery, [], returnURL);
+      return registerMailSemanticAction({
+        name: `mail.message.${id}`,
+        description: `Open message ${id}`,
+        risk: "read",
+        target: () => rowRefs.current.get(id) || null,
+        run: () => navigate(href)
+      });
+    });
+    return () => dispose.forEach((fn) => fn());
+  }, [visibleKey, searchQuery, returnURL, navigate]);
 
   useEffect(() => {
     return () => {
