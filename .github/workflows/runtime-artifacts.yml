@@ -81,15 +81,28 @@ jobs:
           test -s "$runtime/plugins/oidc/backend/oidc.so"
 
           cp -a frontend/dist "$runtime/frontend/dist"
-          for plugin in "${plugins[@]}"; do
-            if [ -d "plugins/$plugin/frontend_dist" ]; then
-              cp -a "plugins/$plugin/frontend_dist" "$runtime/plugins/$plugin/frontend_dist"
-            fi
-            if [ -d "plugins/$plugin/frontend/dist" ]; then
-              mkdir -p "$runtime/plugins/$plugin/frontend"
-              cp -a "plugins/$plugin/frontend/dist" "$runtime/plugins/$plugin/frontend/dist"
-            fi
+
+          mapfile -t frontend_dist_dirs < <(
+            find plugins -mindepth 2 -maxdepth 2 -type d -name frontend_dist -print | sort
+          )
+          for dir in "${frontend_dist_dirs[@]}"; do
+            plugin="${dir#plugins/}"
+            plugin="${plugin%%/*}"
+            cp -a "$dir" "$runtime/plugins/$plugin/frontend_dist"
           done
+
+          mapfile -t nested_frontend_dirs < <(
+            find plugins -mindepth 3 -maxdepth 3 -type d -path 'plugins/*/frontend/dist' -print | sort
+          )
+          for dir in "${nested_frontend_dirs[@]}"; do
+            plugin="${dir#plugins/}"
+            plugin="${plugin%%/*}"
+            mkdir -p "$runtime/plugins/$plugin/frontend"
+            cp -a "$dir" "$runtime/plugins/$plugin/frontend/dist"
+          done
+
+          test -s "$runtime/plugins/matrix_theme/frontend_dist/index.js"
+          test -s "$runtime/plugins/matrix_theme/frontend_dist/themes/matrix/theme.css"
 
           {
             echo "repository=${GITHUB_REPOSITORY}"
@@ -99,7 +112,9 @@ jobs:
             echo "build_date=${build_date}"
             go version
             node --version
-            printf 'plugins=%s\n' "${plugins[*]}"
+            printf 'backend_plugins=%s\n' "${plugins[*]}"
+            printf 'frontend_dist_dirs=%s\n' "${frontend_dist_dirs[*]}"
+            printf 'nested_frontend_dirs=%s\n' "${nested_frontend_dirs[*]}"
           } > "$runtime/PROVENANCE.txt"
 
           (
