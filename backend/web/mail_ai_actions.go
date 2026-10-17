@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"rolltop/backend/mailai"
+	"rolltop/backend/provider"
 	"rolltop/backend/store"
 )
 
@@ -69,7 +70,7 @@ func (s *Server) runMailAIActionTool(r *http.Request, in mailai.ToolRequest) (ma
 		if err := json.Unmarshal(in.Arguments, &args); err != nil || args.MessageID <= 0 {
 			return mailai.ToolResponse{}, http.StatusBadRequest, errors.New("archive_message requires message_id")
 		}
-		if mock, err := s.mutateMockMessage(ctx, in.UserID, args.MessageID, "archive", true); err != nil {
+		if mock, err := s.mutateProviderMessage(ctx, in.UserID, args.MessageID, provider.Mutation{Action: "archive", Value: true}); err != nil {
 			return mailai.ToolResponse{}, http.StatusInternalServerError, err
 		} else if mock {
 			s.noteMailListChanged(in.UserID)
@@ -133,7 +134,7 @@ func (s *Server) runMailAIActionTool(r *http.Request, in mailai.ToolRequest) (ma
 			return mailai.ToolResponse{}, http.StatusBadRequest, errors.New("message_id is required")
 		}
 		starred := in.Name == "star"
-		if mock, err := s.mutateMockMessage(ctx, in.UserID, args.MessageID, "star", starred); err != nil {
+		if mock, err := s.mutateProviderMessage(ctx, in.UserID, args.MessageID, provider.Mutation{Action: "star", Value: starred}); err != nil {
 			return mailai.ToolResponse{}, http.StatusInternalServerError, err
 		} else if mock {
 			s.noteMailListChanged(in.UserID)
@@ -169,19 +170,19 @@ func (s *Server) runMailAIActionTool(r *http.Request, in mailai.ToolRequest) (ma
 		if err := json.Unmarshal(in.Arguments, &args); err != nil || args.MessageID <= 0 || (args.MailboxID <= 0 && strings.TrimSpace(args.Mailbox) == "") {
 			return mailai.ToolResponse{}, http.StatusBadRequest, errors.New("move requires message_id and mailbox or mailbox_id")
 		}
-		if _, err := s.mockProviderMessage(ctx, in.UserID, args.MessageID); err == nil {
+		if _, err := s.providerMessage(ctx, in.UserID, args.MessageID); err == nil {
 			role := strings.ToLower(strings.TrimSpace(args.Mailbox))
 			switch role {
 			case "trash", "垃圾箱", "废纸篓":
-				if _, err := s.mutateMockMessage(ctx, in.UserID, args.MessageID, "trash", true); err != nil {
+				if _, err := s.mutateProviderMessage(ctx, in.UserID, args.MessageID, provider.Mutation{Action: "trash", Value: true}); err != nil {
 					return mailai.ToolResponse{}, http.StatusInternalServerError, err
 				}
 			case "inbox", "收件箱":
-				if _, err := s.mutateMockMessage(ctx, in.UserID, args.MessageID, "restore", true); err != nil {
+				if _, err := s.mutateProviderMessage(ctx, in.UserID, args.MessageID, provider.Mutation{Action: "restore", Value: true}); err != nil {
 					return mailai.ToolResponse{}, http.StatusInternalServerError, err
 				}
 			case "archive", "all", "归档":
-				if _, err := s.mutateMockMessage(ctx, in.UserID, args.MessageID, "archive", true); err != nil {
+				if _, err := s.mutateProviderMessage(ctx, in.UserID, args.MessageID, provider.Mutation{Action: "archive", Value: true}); err != nil {
 					return mailai.ToolResponse{}, http.StatusInternalServerError, err
 				}
 			default:
@@ -240,7 +241,7 @@ func (s *Server) runMailAIActionTool(r *http.Request, in mailai.ToolRequest) (ma
 			return mailai.ToolResponse{}, http.StatusBadRequest, errors.New("message_id is required")
 		}
 		trash := in.Name == "trash"
-		if mock, err := s.mutateMockMessage(ctx, in.UserID, args.MessageID, map[bool]string{true: "trash", false: "restore"}[trash], true); err != nil {
+		if mock, err := s.mutateProviderMessage(ctx, in.UserID, args.MessageID, provider.Mutation{Action: map[bool]string{true: "trash", false: "restore"}[trash], Value: true}); err != nil {
 			return mailai.ToolResponse{}, http.StatusInternalServerError, err
 		} else if mock {
 			s.noteMailListChanged(in.UserID)

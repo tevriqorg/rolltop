@@ -76,11 +76,14 @@ type Options struct {
 	MailAISharedToken string
 	MailAIHTTPClient  *http.Client
 	GoogleConnector   accountconnector.Connector
+	// GmailAPIBaseURL/GmailHTTPClient are injectable for contract tests. Production leaves BaseURL empty to use Google.
+	GmailAPIBaseURL string
+	GmailHTTPClient *http.Client
 }
 
 // Server owns HTTP handlers, shared services, session settings, event fanout, and lightweight caches.
 type Server struct {
-	mockHubMu                 sync.Mutex
+	providerHubMu             sync.Mutex
 	store                     *store.Store
 	blobs                     *blob.Store
 	search                    *search.Service
@@ -156,6 +159,7 @@ type Server struct {
 	googleOAuthMu      sync.Mutex
 	googleOAuthPending map[string]googleOAuthPending
 	gmailAPIBaseURL    string
+	gmailHTTPClient    *http.Client
 }
 
 type contextKey string
@@ -376,6 +380,8 @@ func New(opts Options) (*Server, error) {
 		googleConnector:           opts.GoogleConnector,
 		accountConnectors:         accountconnector.Service{Store: opts.Store, MasterKey: opts.MasterKey},
 		googleOAuthPending:        make(map[string]googleOAuthPending),
+		gmailAPIBaseURL:           strings.TrimRight(strings.TrimSpace(opts.GmailAPIBaseURL), "/"),
+		gmailHTTPClient:           opts.GmailHTTPClient,
 	}
 	if srv.mailAIHTTPClient == nil {
 		srv.mailAIHTTPClient = &http.Client{Timeout: 95 * time.Second}
@@ -407,6 +413,7 @@ func New(opts Options) (*Server, error) {
 		srv.resumeSnoozeReminderWebPushAsync()
 		srv.startSnoozeScheduler()
 		srv.startOutboxWorker()
+		srv.startGmailSyncWorker()
 	}
 	return srv, nil
 }

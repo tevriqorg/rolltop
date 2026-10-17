@@ -12,11 +12,9 @@ import (
 	"strings"
 
 	"rolltop/backend/blob"
-	"rolltop/backend/evidence"
 	"rolltop/backend/provider"
 	"rolltop/backend/search"
 	"rolltop/backend/store"
-	"rolltop/backend/syncer"
 )
 
 type Service struct {
@@ -91,106 +89,32 @@ func (s Service) Mutate(ctx context.Context, a provider.Account, change provider
 	// leaves the checkpoint unchanged and is replayed by the next Sync.
 	return s.Sync(ctx, a)
 }
-func (s Service) Sync(ctx context.Context, a provider.Account) (result error) {
+func (s Service) Sync(ctx context.Context, a provider.Account) error {
 	if a.Provider != provider.Mock || (a.ID != "personal" && a.ID != "work" && a.ID != "travel") || a.UserID <= 0 {
 		return errors.New("unknown mock account")
-	}
-	if s.Search == nil || s.Blobs == nil {
-		return errors.New("mock sync requires blob and search services")
-	}
-	source, err := s.Store.EnsureMockSource(ctx, a.UserID, a.ID)
-	if err != nil {
-		return err
 	}
 	p, err := s.Source(ctx, a)
 	if err != nil {
 		return err
 	}
-	run, err := s.Store.CreateSyncRun(ctx, a.UserID, source.AccountID)
-	if err != nil {
-		return err
+	label, email, ok := storeMockSourceIdentity(a.ID)
+	if !ok {
+		return errors.New("unknown mock account")
 	}
-	progress := store.SyncProgress{CurrentMailbox: "INBOX"}
-	defer func() {
-		status := "completed"
-		message := ""
-		if result != nil {
-			status = "failed"
-			message = "Mock ingestion failed; retry sync"
-		}
-		result = errors.Join(result, s.Store.FinishSyncRun(context.WithoutCancel(ctx), a.UserID, run.ID, status, progress, message))
-	}()
-	existing, err := s.Store.ProviderMessages(ctx, a.UserID)
-	if err != nil {
-		return err
+	return s.syncProviderSource(ctx, a, providerSourceSpec{Provider: provider.Mock, ID: a.ID, Label: label, Email: email}, p)
+}
+
+func storeMockSourceIdentity(id string) (label, email string, ok bool) {
+	switch id {
+	case "personal":
+		return "Personal", "vipdonmen.personal@example.test", true
+	case "work":
+		return "Work", "vipdonmen.work@example.test", true
+	case "travel":
+		return "Travel", "vipdonmen.travel@example.test", true
+	default:
+		return "", "", false
 	}
-	slots := map[string]uint32{}
-	for _, m := range existing {
-		if m.Account == a.ID {
-			row, e := s.Store.GetMessageForUser(ctx, a.UserID, m.ID)
-			if e != nil {
-				return e
-			}
-			slots[m.NativeID] = row.UID
-		}
-	}
-	nextSlot := uint32(1)
-	for _, slot := range slots {
-		if slot >= nextSlot {
-			nextSlot = slot + 1
-		}
-	}
-	// Retry a projection after a crash even when SQLite committed its last row
-	// but the checkpoint did not advance. CreateMessage's slot uniqueness reuses it.
-	state := provider.State{Account: a, Cursor: source.Cursor}
-	router, err := provider.NewRouter(p)
-	if err != nil {
-		return err
-	}
-	next, err := router.Fetch(ctx, a, state, func(m provider.Message) error {
-		progress.MessagesSeen++
-		slot, ok := slots[m.ID]
-		if !ok {
-			slot = nextSlot
-			nextSlot++
-			slots[m.ID] = slot
-		}
-		flags := []string{}
-		if m.Read {
-			flags = append(flags, `\Seen`)
-		}
-		if m.Starred {
-			flags = append(flags, `\Flagged`)
-		}
-		evidenceStore := evidence.Service{Store: s.Store, Root: s.Blobs.Root}
-		observation, err := evidenceStore.Capture(ctx, evidence.Input{
-			UserID: a.UserID, Provider: a.Provider, SourceAccount: a.ID, ProviderMessageID: m.ID,
-			ThreadID: m.ThreadID, Folders: m.Folders, Labels: m.Labels, MessageIDHeader: m.MessageID,
-			SourceSize: m.Size, Raw: m.Raw, Oversized: m.Oversized,
-		})
-		if err != nil {
-			return err
-		}
-		ingest := syncer.Service{Store: s.Store, Blobs: s.Blobs, Search: s.Search}
-		msg, err := ingest.StoreSnapshotMessage(ctx, a.UserID, store.MailAccount{ID: source.AccountID, UserID: a.UserID}, store.Mailbox{ID: source.MailboxID, UserID: a.UserID, AccountID: source.AccountID, Name: "INBOX", Role: "inbox", IncludeInSearch: true}, syncer.FetchedMessage{Mailbox: "INBOX", UID: slot, Raw: m.Raw, Size: m.Size, Flags: flags, Oversized: m.Oversized})
-		if err != nil {
-			return err
-		}
-		if err = s.Store.LinkEvidenceObservation(ctx, a.UserID, observation.ObservationKey, msg.ID); err != nil {
-			return err
-		}
-		folders, _ := json.Marshal(m.Folders)
-		labels, _ := json.Marshal(m.Labels)
-		if err = s.Store.SaveProviderMessage(ctx, a.UserID, store.ProviderMessage{ID: msg.ID, Account: a.ID, NativeID: m.ID, ThreadID: m.ThreadID, Folders: string(folders), Labels: string(labels), Oversized: m.Oversized}, m.Read, m.Starred); err != nil {
-			return err
-		}
-		progress.MessagesStored++
-		return s.Store.UpdateSyncRunProgress(ctx, a.UserID, run.ID, progress)
-	})
-	if err != nil {
-		return err
-	}
-	return s.Store.SetProviderCursor(ctx, a.UserID, a.ID, next.Cursor)
 }
 
 type Message struct {
@@ -217,7 +141,7 @@ type Attachment struct {
 type Filter struct{ View, Provider, Account, Label, Query string }
 
 func (s Service) Messages(ctx context.Context, userID int64, f Filter) ([]Message, error) {
-	metadata, err := s.Store.ProviderMessages(ctx, userID)
+	metadata, err := s.Store.ProviderMessagesFor(ctx, userID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -240,14 +164,14 @@ func (s Service) Messages(ctx context.Context, userID int64, f Filter) ([]Messag
 	}
 	out := []Message{}
 	for _, meta := range metadata {
-		if f.Provider != "" && f.Provider != "mock" || f.Account != "" && f.Account != meta.Account || f.Query != "" && !hits[meta.ID] {
+		if f.Provider != "" && f.Provider != meta.Provider || f.Account != "" && f.Account != meta.Account || f.Query != "" && !hits[meta.ID] {
 			continue
 		}
 		msg, e := s.Store.GetMessageForUser(ctx, userID, meta.ID)
 		if e != nil {
 			return nil, e
 		}
-		m := Message{ID: msg.ID, Provider: provider.Mock, Account: meta.Account, NativeID: meta.NativeID, ThreadID: meta.ThreadID, Subject: msg.Subject, From: msg.FromAddr, Body: msg.BodyText, Read: msg.IsRead, Starred: msg.IsStarred, Oversized: meta.Oversized, Attachments: []Attachment{}}
+		m := Message{ID: msg.ID, Provider: provider.Kind(meta.Provider), Account: meta.Account, NativeID: meta.NativeID, ThreadID: meta.ThreadID, Subject: msg.Subject, From: msg.FromAddr, Body: msg.BodyText, Read: msg.IsRead, Starred: msg.IsStarred, Oversized: meta.Oversized, Attachments: []Attachment{}}
 		if e = json.Unmarshal([]byte(meta.Folders), &m.Folders); e != nil {
 			return nil, e
 		}

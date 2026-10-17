@@ -3,25 +3,13 @@ package gmail
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"rolltop/backend/provider"
 )
-
-const defaultBaseURL = "https://gmail.googleapis.com/gmail/v1"
-
-type Client struct {
-	BaseURL     string
-	AccessToken string
-	HTTPClient  *http.Client
-}
 
 func (c Client) Census(ctx context.Context, account provider.Account) (provider.Census, error) {
 	if account.UserID <= 0 || account.ID == "" {
@@ -41,41 +29,6 @@ func (c Client) Census(ctx context.Context, account provider.Account) (provider.
 	return provider.Census{Account: account, MessageCount: len(ids), EstimatedRawBytes: bytes,
 		ExpectedEvidenceBytes: bytes, RecommendedFreeDisk: bytes + (bytes+1)/2,
 		Method: "Gmail messages.list + messages.get(sizeEstimate); metadata only", Exact: false}, nil
-}
-func (c Client) httpClient() *http.Client {
-	client := http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if c.HTTPClient != nil {
-		client = *c.HTTPClient
-		if client.Timeout == 0 {
-			client.Timeout = 20 * time.Second
-		}
-		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	}
-	return &client
-}
-
-func (c Client) baseURL() string {
-	if value := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); value != "" {
-		return value
-	}
-	return defaultBaseURL
-}
-
-func (c Client) getJSON(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.AccessToken)
-	res, err := c.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode/100 != 2 {
-		return fmt.Errorf("gmail API %s returned HTTP %d", path, res.StatusCode)
-	}
-	return json.NewDecoder(res.Body).Decode(out)
 }
 func (c Client) listMessageIDs(ctx context.Context) ([]string, error) {
 	ids := []string{}
@@ -105,7 +58,6 @@ func (c Client) listMessageIDs(ctx context.Context) ([]string, error) {
 		pageToken = page.NextPageToken
 	}
 }
-
 func (c Client) messageSize(ctx context.Context, id string) (int64, error) {
 	q := url.Values{"format": {"metadata"}, "fields": {"id,sizeEstimate"}}
 	var message struct {
