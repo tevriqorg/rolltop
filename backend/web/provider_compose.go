@@ -125,6 +125,14 @@ func (s *Server) queueProviderCompose(ctx context.Context, cu currentUser, form 
 		return store.ProviderOutboxJob{}, true, errors.New("compose submission identifier is invalid")
 	}
 	sourceID := googleSourceID(connection)
+	threadID := ""
+	if form.InReplyToID > 0 {
+		if meta, metaErr := s.store.ProviderMessageForLocalID(ctx, cu.User.ID, form.InReplyToID); metaErr == nil && meta.Provider == string(provider.Gmail) && meta.Account == sourceID {
+			threadID = meta.ThreadID
+		} else if metaErr != nil && !store.IsNotFound(metaErr) {
+			return store.ProviderOutboxJob{}, true, metaErr
+		}
+	}
 	if existing, err := s.store.GetProviderOutboxBySubmission(ctx, cu.User.ID, string(provider.Gmail), sourceID, form.SubmissionKey); err == nil {
 		return existing, true, nil
 	} else if !store.IsNotFound(err) {
@@ -143,7 +151,7 @@ func (s *Server) queueProviderCompose(ctx context.Context, cu currentUser, form 
 		_ = s.blobs.DeleteUserBlob(cu.User.ID, saved.Path)
 		return store.ProviderOutboxJob{}, true, err
 	}
-	job, created, err := s.store.EnqueueProviderOutbox(ctx, store.ProviderOutboxEnqueue{UserID: cu.User.ID, Provider: string(provider.Gmail), SourceID: sourceID, SubmissionKey: form.SubmissionKey, Subject: strings.TrimSpace(form.Subject), BlobID: blobRec.ID, RawSHA256: saved.SHA256, RawSize: saved.Size})
+	job, created, err := s.store.EnqueueProviderOutbox(ctx, store.ProviderOutboxEnqueue{UserID: cu.User.ID, Provider: string(provider.Gmail), SourceID: sourceID, SubmissionKey: form.SubmissionKey, Subject: strings.TrimSpace(form.Subject), ThreadID: threadID, BlobID: blobRec.ID, RawSHA256: saved.SHA256, RawSize: saved.Size})
 	if err != nil {
 		deleted, _ := s.store.DeleteBlobIfUnreferencedForUser(ctx, cu.User.ID, blobRec.ID)
 		if deleted {

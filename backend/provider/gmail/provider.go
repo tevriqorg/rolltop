@@ -145,7 +145,7 @@ func (p Provider) historyFetch(ctx context.Context, state provider.State, labels
 	deleted := map[string]apiMessage{}
 	nextHistory := state.Cursor
 	for {
-		q := url.Values{"startHistoryId": {state.Cursor}, "maxResults": {"500"}, "historyTypes": {"messageAdded,labelAdded,labelRemoved,messageDeleted"}, "fields": {"history(id,messagesAdded/message(id,threadId),messagesDeleted/message(id,threadId),labelsAdded/message(id,threadId),labelsRemoved/message(id,threadId)),historyId,nextPageToken"}}
+		q := url.Values{"startHistoryId": {state.Cursor}, "maxResults": {"500"}, "historyTypes": {"messageAdded", "messageDeleted", "labelAdded", "labelRemoved"}, "fields": {"history(id,messagesAdded/message(id,threadId),messagesDeleted/message(id,threadId),labelsAdded/message(id,threadId),labelsRemoved/message(id,threadId)),historyId,nextPageToken"}}
 		if token != "" {
 			q.Set("pageToken", token)
 		}
@@ -252,7 +252,7 @@ func decodeRaw(value string) ([]byte, error) {
 	return base64.URLEncoding.DecodeString(value)
 }
 func (c Client) message(ctx context.Context, id string, labels map[string]string) (provider.Message, error) {
-	q := url.Values{"format": {"metadata"}, "metadataHeaders": {"Message-ID"}, "fields": {"id,threadId,historyId,labelIds,sizeEstimate,payload/headers,raw"}}
+	q := url.Values{"format": {"metadata"}, "metadataHeaders": {"Message-ID", "From", "To", "Cc", "Subject", "Date"}, "fields": {"id,threadId,historyId,labelIds,sizeEstimate,payload/headers"}}
 	var meta apiMessage
 	if err := c.getJSON(ctx, "/users/me/messages/"+url.PathEscape(id)+"?"+q.Encode(), &meta); err != nil {
 		return provider.Message{}, err
@@ -388,11 +388,9 @@ func (c Client) Mutate(ctx context.Context, change provider.Mutation) error {
 	case "archive":
 		remove = append(remove, "INBOX")
 	case "trash":
-		add = append(add, "TRASH")
-		remove = append(remove, "INBOX")
+		return c.postJSON(ctx, "/users/me/messages/"+url.PathEscape(id)+"/trash", map[string]any{}, nil)
 	case "restore":
-		remove = append(remove, "TRASH")
-		add = append(add, "INBOX")
+		return c.postJSON(ctx, "/users/me/messages/"+url.PathEscape(id)+"/untrash", map[string]any{}, nil)
 	case "label":
 		labelID, err := c.resolveLabelID(ctx, change.Label)
 		if err != nil {
@@ -416,11 +414,18 @@ type SentMessage struct {
 }
 
 func (c Client) SendRaw(ctx context.Context, raw []byte) (SentMessage, error) {
+	return c.SendRawInThread(ctx, raw, "")
+}
+func (c Client) SendRawInThread(ctx context.Context, raw []byte, threadID string) (SentMessage, error) {
 	if len(raw) == 0 {
 		return SentMessage{}, errors.New("gmail send requires raw MIME")
 	}
+	in := map[string]string{"raw": base64.RawURLEncoding.EncodeToString(raw)}
+	if threadID = strings.TrimSpace(threadID); threadID != "" {
+		in["threadId"] = threadID
+	}
 	var out SentMessage
-	err := c.postJSON(ctx, "/users/me/messages/send", map[string]string{"raw": base64.RawURLEncoding.EncodeToString(raw)}, &out)
+	err := c.postJSON(ctx, "/users/me/messages/send", in, &out)
 	if err != nil {
 		return SentMessage{}, err
 	}

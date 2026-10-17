@@ -24,6 +24,7 @@ type ProviderOutboxJob struct {
 	SourceID        string
 	SubmissionKey   string
 	Subject         string
+	ThreadID        string
 	BlobID          int64
 	RawSHA256       string
 	RawSize         int64
@@ -42,6 +43,7 @@ type ProviderOutboxEnqueue struct {
 	SourceID      string
 	SubmissionKey string
 	Subject       string
+	ThreadID      string
 	BlobID        int64
 	RawSHA256     string
 	RawSize       int64
@@ -60,7 +62,7 @@ func (s *Store) EnqueueProviderOutbox(ctx context.Context, in ProviderOutboxEnqu
 		return ProviderOutboxJob{}, false, err
 	}
 	now := nowUnix()
-	res, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO provider_outbox_jobs(user_id,provider,source_id,submission_key,subject,blob_id,raw_sha256,raw_size,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'pending',?,?)`, in.UserID, in.Provider, in.SourceID, in.SubmissionKey, strings.TrimSpace(in.Subject), in.BlobID, in.RawSHA256, in.RawSize, now, now)
+	res, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO provider_outbox_jobs(user_id,provider,source_id,submission_key,subject,thread_id,blob_id,raw_sha256,raw_size,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)`, in.UserID, in.Provider, in.SourceID, in.SubmissionKey, strings.TrimSpace(in.Subject), strings.TrimSpace(in.ThreadID), in.BlobID, in.RawSHA256, in.RawSize, now, now)
 	if err != nil {
 		return ProviderOutboxJob{}, false, err
 	}
@@ -75,7 +77,7 @@ func (s *Store) EnqueueProviderOutbox(ctx context.Context, in ProviderOutboxEnqu
 func scanProviderOutbox(row rowScanner) (ProviderOutboxJob, error) {
 	var j ProviderOutboxJob
 	var acknowledged, created, updated int64
-	err := row.Scan(&j.ID, &j.UserID, &j.Provider, &j.SourceID, &j.SubmissionKey, &j.Subject, &j.BlobID, &j.RawSHA256, &j.RawSize, &j.State, &j.NativeMessageID, &j.AttemptCount, &j.LastError, &acknowledged, &created, &updated)
+	err := row.Scan(&j.ID, &j.UserID, &j.Provider, &j.SourceID, &j.SubmissionKey, &j.Subject, &j.ThreadID, &j.BlobID, &j.RawSHA256, &j.RawSize, &j.State, &j.NativeMessageID, &j.AttemptCount, &j.LastError, &acknowledged, &created, &updated)
 	if err != nil {
 		return ProviderOutboxJob{}, err
 	}
@@ -87,7 +89,7 @@ func scanProviderOutbox(row rowScanner) (ProviderOutboxJob, error) {
 	return j, nil
 }
 func providerOutboxSelect() string {
-	return `SELECT id,user_id,provider,source_id,submission_key,subject,blob_id,raw_sha256,raw_size,state,native_message_id,attempt_count,last_error,acknowledged_at,created_at,updated_at FROM provider_outbox_jobs`
+	return `SELECT id,user_id,provider,source_id,submission_key,subject,thread_id,blob_id,raw_sha256,raw_size,state,native_message_id,attempt_count,last_error,acknowledged_at,created_at,updated_at FROM provider_outbox_jobs`
 }
 func (s *Store) GetProviderOutboxBySubmission(ctx context.Context, userID int64, providerName, sourceID, submission string) (ProviderOutboxJob, error) {
 	db, err := s.dataDB(ctx, userID)

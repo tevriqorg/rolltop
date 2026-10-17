@@ -22,6 +22,7 @@ type gmailFixture struct {
 	events        []map[string]any
 	modifyBodies  []map[string]any
 	sentRaw       []byte
+	sentThread    string
 	failProfile   int
 	expireHistory bool
 }
@@ -31,7 +32,7 @@ func newGmailFixture() *gmailFixture {
 	raw2 := []byte("From: Sender <sender@example.test>\r\nTo: owner@example.test\r\nSubject: Two\r\nMessage-ID: <two@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nhello two\r\n")
 	return &gmailFixture{history: "12", messages: map[string]map[string]any{
 		"m1": {"id": "m1", "threadId": "t1", "historyId": "11", "labelIds": []string{"INBOX", "UNREAD", "STARRED", "L1"}, "sizeEstimate": len(raw1), "raw": base64.RawURLEncoding.EncodeToString(raw1), "payload": map[string]any{"headers": []map[string]string{{"name": "Message-ID", "value": "<one@example.test>"}, {"name": "Subject", "value": "One"}}}},
-		"m2": {"id": "m2", "threadId": "t2", "historyId": "12", "labelIds": []string{"INBOX"}, "sizeEstimate": len(raw2), "raw": base64.RawURLEncoding.EncodeToString(raw2), "payload": map[string]any{"headers": []map[string]string{{"name": "Message-ID", "value": "<two@example.test>"}}}},
+		"m2": {"id": "m2", "threadId": "t1", "historyId": "12", "labelIds": []string{"INBOX"}, "sizeEstimate": len(raw2), "raw": base64.RawURLEncoding.EncodeToString(raw2), "payload": map[string]any{"headers": []map[string]string{{"name": "Message-ID", "value": "<two@example.test>"}}}},
 	}}
 }
 func (f *gmailFixture) server(t *testing.T) *httptest.Server {
@@ -62,6 +63,9 @@ func (f *gmailFixture) server(t *testing.T) *httptest.Server {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": refs})
 		case r.URL.Path == "/users/me/history":
+			if got := r.URL.Query()["historyTypes"]; len(got) != 4 {
+				t.Errorf("historyTypes=%v", got)
+			}
 			if f.expireHistory {
 				http.Error(w, "expired", http.StatusNotFound)
 				return
@@ -82,6 +86,7 @@ func (f *gmailFixture) server(t *testing.T) *httptest.Server {
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.sentRaw, _ = base64.RawURLEncoding.DecodeString(body["raw"])
+			f.sentThread = body["threadId"]
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "sent-1", "threadId": "sent-thread", "labelIds": []string{"SENT"}})
 		case strings.HasPrefix(r.URL.Path, "/users/me/messages/"):
 			id, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/users/me/messages/"))
@@ -113,14 +118,14 @@ func TestProviderFullHistoryMutationSendRetryAndExpiry(t *testing.T) {
 	if next.Cursor != "12" || len(got) != 2 {
 		t.Fatalf("next=%+v got=%d", next, len(got))
 	}
-	if got[0].ID != "m1" || got[0].Read || !got[0].Starred || got[0].MessageID != "<one@example.test>" || len(got[0].Labels) != 1 || got[0].Labels[0] != "Project" {
+	if got[0].ID != "m1" || got[0].Read || !got[0].Starred || got[0].MessageID != "<one@example.test>" || len(got[0].Labels) != 1 || got[0].Labels[0] != "Project" || got[0].ThreadID != "t1" || got[1].ThreadID != "t1" {
 		t.Fatalf("m1=%+v", got[0])
 	}
 	f.mu.Lock()
 	f.history = "15"
 	f.events = []map[string]any{
 		{"id": "13", "labelsRemoved": []map[string]any{{"message": map[string]any{"id": "m1", "threadId": "t1"}}}},
-		{"id": "14", "messagesDeleted": []map[string]any{{"message": map[string]any{"id": "m2", "threadId": "t2"}}}},
+		{"id": "14", "messagesDeleted": []map[string]any{{"message": map[string]any{"id": "m2", "threadId": "t1"}}}},
 	}
 	m1 := f.messages["m1"]
 	m1["labelIds"] = []string{"INBOX", "L1"}
@@ -144,7 +149,7 @@ func TestProviderFullHistoryMutationSendRetryAndExpiry(t *testing.T) {
 		t.Fatalf("modify=%v", body)
 	}
 	raw := []byte("From: owner@example.test\r\nTo: x@example.test\r\nMessage-ID: <sent@example.test>\r\n\r\nhello")
-	sent, err := client.SendRaw(context.Background(), raw)
+	sent, err := client.SendRawInThread(context.Background(), raw, "thread-original")
 	if err != nil || sent.ID != "sent-1" {
 		t.Fatalf("sent=%+v err=%v", sent, err)
 	}
@@ -153,6 +158,12 @@ func TestProviderFullHistoryMutationSendRetryAndExpiry(t *testing.T) {
 	f.mu.Unlock()
 	if !same {
 		t.Fatal("sent raw changed")
+	}
+	f.mu.Lock()
+	thread := f.sentThread
+	f.mu.Unlock()
+	if thread != "thread-original" {
+		t.Fatalf("sent thread=%q", thread)
 	}
 	f.mu.Lock()
 	f.expireHistory = true

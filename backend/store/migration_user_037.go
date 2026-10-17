@@ -13,6 +13,7 @@ func userProviderOutboxMigrationSet() migrationSet {
  source_id TEXT NOT NULL,
  submission_key TEXT NOT NULL,
  subject TEXT NOT NULL DEFAULT '',
+ thread_id TEXT NOT NULL DEFAULT '',
  blob_id INTEGER NOT NULL REFERENCES blobs(id) ON DELETE RESTRICT,
  raw_sha256 TEXT NOT NULL,
  raw_size INTEGER NOT NULL,

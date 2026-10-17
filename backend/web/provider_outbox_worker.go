@@ -152,7 +152,7 @@ func (s *Server) processClaimedProviderOutboxJob(ctx context.Context, job store.
 		fail(store.ProviderOutboxFailed, "Google access token refresh failed")
 		return
 	}
-	sent, err := client.SendRaw(ctx, raw)
+	sent, err := client.SendRawInThread(ctx, raw, job.ThreadID)
 	if err != nil {
 		state := store.ProviderOutboxUnknown
 		message := "Gmail send outcome is uncertain; automatic retry is disabled"

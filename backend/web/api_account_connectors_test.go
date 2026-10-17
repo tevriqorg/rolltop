@@ -15,6 +15,7 @@ import (
 
 	"rolltop/backend/accountconnector"
 	"rolltop/backend/blob"
+	"rolltop/backend/provider"
 	"rolltop/backend/search"
 	"rolltop/backend/store"
 )
@@ -134,23 +135,55 @@ func TestGoogleCensusApprovalGateAndSyntheticSync(t *testing.T) {
 	}
 	defer index.Close()
 	raw := []byte("From: Sender <sender@example.test>\r\nTo: owner@gmail.test\r\nSubject: Gmail gate\r\nMessage-ID: <gmail-gate@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nbody from gmail\r\n")
+	historyID := "101"
+	labels := []string{"INBOX", "UNREAD", "L1"}
+	modified := false
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer access" {
 			t.Errorf("auth=%q", r.Header.Get("Authorization"))
 		}
 		switch {
 		case r.URL.Path == "/users/me/profile":
-			_ = json.NewEncoder(w).Encode(map[string]any{"emailAddress": "owner@gmail.test", "historyId": "101"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"emailAddress": "owner@gmail.test", "historyId": historyID})
 		case r.URL.Path == "/users/me/labels":
 			_ = json.NewEncoder(w).Encode(map[string]any{"labels": []map[string]string{{"id": "INBOX", "name": "INBOX"}, {"id": "UNREAD", "name": "UNREAD"}, {"id": "L1", "name": "Project"}}})
 		case r.URL.Path == "/users/me/messages":
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]string{{"id": "m1", "threadId": "t1"}}})
 		case r.URL.Path == "/users/me/messages/m1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "m1", "threadId": "t1", "historyId": "101", "labelIds": []string{"INBOX", "UNREAD", "L1"},
+				"id": "m1", "threadId": "t1", "historyId": historyID, "labelIds": labels,
 				"sizeEstimate": len(raw), "raw": base64.RawURLEncoding.EncodeToString(raw),
 				"payload": map[string]any{"headers": []map[string]string{{"name": "Message-ID", "value": "<gmail-gate@example.test>"}}},
 			})
+		case r.URL.Path == "/users/me/messages/m1/modify":
+			var body struct {
+				Add    []string `json:"addLabelIds"`
+				Remove []string `json:"removeLabelIds"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			set := map[string]bool{}
+			for _, label := range labels {
+				set[label] = true
+			}
+			for _, label := range body.Add {
+				set[label] = true
+			}
+			for _, label := range body.Remove {
+				delete(set, label)
+			}
+			labels = labels[:0]
+			for label := range set {
+				labels = append(labels, label)
+			}
+			historyID = "102"
+			modified = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m1", "threadId": "t1", "labelIds": labels, "historyId": historyID})
+		case r.URL.Path == "/users/me/history":
+			history := []any{}
+			if modified {
+				history = []any{map[string]any{"id": "102", "labelsAdded": []any{map[string]any{"message": map[string]any{"id": "m1", "threadId": "t1"}}}}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"history": history, "historyId": historyID})
 		default:
 			http.NotFound(w, r)
 		}
@@ -211,6 +244,18 @@ func TestGoogleCensusApprovalGateAndSyntheticSync(t *testing.T) {
 	}
 	if row.Subject != "Gmail gate" || row.IsRead {
 		t.Fatalf("row=%+v", row)
+	}
+	// Shared UI/Agent mutations route to Gmail rather than IMAP and reconcile from native history.
+	native, err := s.mutateProviderMessage(ctx, owner.ID, messages[0].ID, provider.Mutation{Action: "star", Value: true})
+	if err != nil || !native {
+		t.Fatalf("gmail star native=%v err=%v", native, err)
+	}
+	row, err = st.GetMessageForUser(ctx, owner.ID, messages[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.IsStarred {
+		t.Fatalf("star mutation did not reconcile: %+v", row)
 	}
 	// Re-running Census is a deliberate safety boundary: it invalidates an old approval.
 	if w := request("POST", "/api/account-connectors/google/census", "", true); w.Code != http.StatusOK {
