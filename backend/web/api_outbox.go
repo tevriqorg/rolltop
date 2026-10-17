@@ -33,6 +33,8 @@ type apiOutboxJob struct {
 	RawSize             int64  `json:"raw_size"`
 	AppendedUID         uint32 `json:"appended_uid"`
 	AppendedUIDValidity uint32 `json:"appended_uid_validity"`
+	ProviderNative      bool   `json:"provider_native,omitempty"`
+	Provider            string `json:"provider,omitempty"`
 }
 
 func (s *Server) apiOutbox(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +70,14 @@ func (s *Server) apiOutbox(w http.ResponseWriter, r *http.Request) {
 	for _, job := range jobs {
 		out = append(out, apiOutboxJobFrom(job, subjects[job.OptimisticMessageID]))
 	}
+	providerJobs, err := s.store.ListProviderOutboxJobsForUser(r.Context(), cu.User.ID, 100)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	for _, job := range providerJobs {
+		out = append(out, apiProviderOutboxJobFrom(job))
+	}
 	summary, err := s.store.OutboxSummaryForUser(r.Context(), cu.User.ID)
 	if err != nil {
 		s.serverError(w, r, err)
@@ -90,11 +100,15 @@ func (s *Server) apiOutboxPath(w http.ResponseWriter, r *http.Request, rest stri
 		return
 	}
 	id, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || id <= 0 {
+	if err != nil || id == 0 {
 		http.NotFound(w, r)
 		return
 	}
 	if !s.verifyCSRF(w, r) {
+		return
+	}
+	if id < 0 {
+		s.apiProviderOutboxAction(w, r, cu, -id, parts[1])
 		return
 	}
 	job, err := s.store.GetOutboxJobForUser(r.Context(), cu.User.ID, id)
@@ -197,4 +211,64 @@ func apiOutboxSummary(summary store.OutboxSummary) map[string]any {
 		"needs_attention": summary.NeedsAttention,
 		"latest_id":       summary.LatestID,
 	}
+}
+
+func apiProviderOutboxJobFrom(job store.ProviderOutboxJob) apiOutboxJob {
+	delivery, filing := "queued", "pending"
+	completed := ""
+	switch job.State {
+	case store.ProviderOutboxSending:
+		delivery = "smtp_in_flight"
+	case store.ProviderOutboxSent:
+		delivery = "accepted"
+		filing = "complete"
+		completed = timeString(job.UpdatedAt)
+	case store.ProviderOutboxFailed:
+		delivery = "failed"
+	case store.ProviderOutboxUnknown:
+		delivery = "delivery_unknown"
+	case store.ProviderOutboxCanceled:
+		delivery = "canceled"
+		completed = timeString(job.UpdatedAt)
+	}
+	attention := (job.State == store.ProviderOutboxFailed || job.State == store.ProviderOutboxUnknown) && job.AcknowledgedAt.IsZero()
+	return apiOutboxJob{ID: -job.ID, MessageID: 0, Subject: job.Subject, DeliveryState: delivery, FilingState: filing, AttemptCount: job.AttemptCount, LastError: job.LastError, NeedsAttention: attention, CanCancel: job.State == store.ProviderOutboxPending || job.State == store.ProviderOutboxFailed, CanRetry: job.State == store.ProviderOutboxFailed || job.State == store.ProviderOutboxUnknown, RetryMayDuplicate: job.State == store.ProviderOutboxUnknown, SMTPAcceptedAt: map[bool]string{true: timeString(job.UpdatedAt), false: ""}[job.State == store.ProviderOutboxSent], CompletedAt: completed, CreatedAt: timeString(job.CreatedAt), UpdatedAt: timeString(job.UpdatedAt), RawSize: job.RawSize, ProviderNative: true, Provider: job.Provider}
+}
+
+func (s *Server) apiProviderOutboxAction(w http.ResponseWriter, r *http.Request, cu currentUser, id int64, action string) {
+	job, err := s.store.GetProviderOutboxJob(r.Context(), cu.User.ID, id)
+	if store.IsNotFound(err) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	switch action {
+	case "acknowledge":
+		err = s.store.AcknowledgeProviderOutbox(r.Context(), cu.User.ID, id)
+	case "cancel":
+		err = s.store.CancelProviderOutbox(r.Context(), cu.User.ID, id)
+	case "retry":
+		var body struct {
+			RetryAnyway bool `json:"retry_anyway"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if job.State == store.ProviderOutboxUnknown && !body.RetryAnyway {
+			writeAPIError(w, http.StatusConflict, "Gmail may already have accepted this message. Confirm retry anyway to accept the duplicate risk.")
+			return
+		}
+		err = s.store.RequeueProviderOutbox(r.Context(), cu.User.ID, id, body.RetryAnyway)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.notifyOutboxChanged(cu.User.ID)
+	s.wakeProviderOutboxWorker()
+	writeJSON(w, map[string]any{"ok": true})
 }

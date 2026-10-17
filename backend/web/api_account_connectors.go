@@ -192,11 +192,16 @@ func (s *Server) googleConnectorCallback(w http.ResponseWriter, r *http.Request,
 		writeAPIError(w, http.StatusBadRequest, "Google OAuth state is invalid or expired.")
 		return
 	}
-	_, _, err := s.accountConnectors.FinishAuthorization(r.Context(), userID, s.googleConnector, pending.Capabilities, code, pending.PKCE)
+	connection, _, err := s.accountConnectors.FinishAuthorization(r.Context(), userID, s.googleConnector, pending.Capabilities, code, pending.PKCE)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
+	if _, err := s.store.CreateMailIdentityForUser(r.Context(), userID, store.MailIdentity{Email: connection.Email, DisplayName: connection.DisplayName, AutocryptEnabled: true}); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.clearComposeIdentityCache(userID)
 	// Authorization never unlocks or starts Gmail backfill. The next real API
 	// operation is forced through metadata-only Census.
 	http.Redirect(w, r, "/settings/account/mail?google=connected", http.StatusSeeOther)

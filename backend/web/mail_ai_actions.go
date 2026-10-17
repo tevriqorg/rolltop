@@ -328,6 +328,7 @@ func (s *Server) runMailAIActionTool(r *http.Request, in mailai.ToolRequest) (ma
 		}
 		s.applyReplyComposeDefaults(ctx, cu, msg, thread, &form)
 		mailAIPrependPlainBody(&form, args.Body)
+		form.ProviderSourceMessageID = msg.ID
 		return s.mailAIQueueCompose(ctx, in, cu, form)
 
 	case "forward_mail":
@@ -361,6 +362,7 @@ func (s *Server) runMailAIActionTool(r *http.Request, in mailai.ToolRequest) (ma
 		if strings.TrimSpace(args.Body) != "" {
 			mailAIPrependPlainBody(&form, args.Body)
 		}
+		form.ProviderSourceMessageID = msg.ID
 		if args.IncludeAttachments {
 			attachments, err := s.composeExistingAttachmentsForMessage(ctx, in.UserID, msg.ID)
 			if err != nil {
@@ -492,6 +494,14 @@ func mailAIPrependPlainBody(form *composeForm, body string) {
 }
 
 func (s *Server) mailAIQueueCompose(ctx context.Context, in mailai.ToolRequest, cu currentUser, form composeForm) (mailai.ToolResponse, int, error) {
+	if providerJob, handled, err := s.queueProviderCompose(ctx, cu, form); handled {
+		if err != nil {
+			return mailai.ToolResponse{}, mailAIActionStatus(err), err
+		}
+		s.notifyOutboxChanged(in.UserID)
+		s.wakeProviderOutboxWorker()
+		return mailai.ToolResponse{Name: in.Name, Result: providerOutboxResult(providerJob, form)}, http.StatusOK, nil
+	}
 	job, sent, err := s.queueCompose(ctx, cu, form)
 	if err != nil {
 		return mailai.ToolResponse{}, mailAIActionStatus(err), err

@@ -47,7 +47,7 @@ export function OutboxView({
     let retryAnyway = false;
     if (action === "retry" && job.retry_may_duplicate) {
       retryAnyway = window.confirm(
-        "The SMTP connection ended after delivery began, so this message may already have been sent. Retry anyway and accept the risk of a duplicate?"
+        job.provider_native ? "Gmail may already have accepted this message. Retry anyway and accept the risk of a duplicate?" : "The SMTP connection ended after delivery began, so this message may already have been sent. Retry anyway and accept the risk of a duplicate?"
       );
       if (!retryAnyway) return;
     }
@@ -74,7 +74,7 @@ export function OutboxView({
         <div>
           <span className="outbox-eyebrow">Delivery center</span>
           <h1><Icon name="send" weight="duotone" /> Outbox</h1>
-          <p>Messages appear in Sent as soon as they are safely queued. SMTP delivery continues here in the background.</p>
+          <p>Messages are durably queued before delivery. SMTP and provider-native delivery continue here in the background.</p>
         </div>
         <button className="secondary" type="button" onClick={() => void refresh()} disabled={loading}>
           <Icon name="sync" /> Refresh
@@ -165,7 +165,7 @@ function OutboxCard({
         <div className="outbox-meta">
           <span>{formatBytes(job.raw_size)}</span>
           <span>Queued {formatDate(job.created_at)}</span>
-          {job.attempt_count > 0 ? <span>{job.attempt_count} SMTP {job.attempt_count === 1 ? "attempt" : "attempts"}</span> : null}
+          {job.attempt_count > 0 ? <span>{job.attempt_count} {job.provider_native ? "provider" : "SMTP"} {job.attempt_count === 1 ? "attempt" : "attempts"}</span> : null}
           {job.filing_attempt_count > 0 ? <span>{job.filing_attempt_count} Sent-copy {job.filing_attempt_count === 1 ? "attempt" : "attempts"}</span> : null}
         </div>
       </div>
@@ -197,8 +197,9 @@ function OutboxCard({
 }
 
 function jobStatus(job: OutboxJob): { label: string; detail: string; tone: string } {
+  const transport = job.provider_native ? "Gmail API" : "SMTP";
   if (job.delivery_state === "delivery_unknown") {
-    return { label: "Delivery uncertain", detail: "The connection ended after SMTP delivery began. Rolltop will not retry automatically because that could send a duplicate.", tone: "danger" };
+    return { label: "Delivery uncertain", detail: `The connection ended after ${transport} delivery began. Rolltop will not retry automatically because that could send a duplicate.`, tone: "danger" };
   }
   if (job.delivery_state === "failed") {
     return { label: "Send failed", detail: "Automatic delivery stopped. Review the error and retry when the account is ready.", tone: "danger" };
@@ -207,34 +208,35 @@ function jobStatus(job: OutboxJob): { label: string; detail: string; tone: strin
     return { label: "Canceled", detail: "This message was canceled before SMTP accepted it.", tone: "quiet" };
   }
   if (job.delivery_state === "accepted" && job.filing_state === "complete") {
-    return { label: "Sent", detail: "SMTP accepted the message and its server-side Sent copy was confirmed.", tone: "complete" };
+    return { label: "Sent", detail: job.provider_native ? "Gmail accepted the message; native history will reconcile the Sent copy." : "SMTP accepted the message and its server-side Sent copy was confirmed.", tone: "complete" };
   }
   if (job.delivery_state === "accepted") {
     const attention = job.filing_state === "needs_attention";
     return {
       label: attention ? "Sent · copy needs attention" : "Sent · saving copy",
       detail: attention
-        ? "SMTP accepted the message, but Rolltop could not confirm its server-side Sent copy."
-        : "SMTP accepted the message. Rolltop is confirming the matching copy in your Sent folder.",
+        ? `${transport} accepted the message, but Rolltop could not confirm its server-side Sent copy.`
+        : `${transport} accepted the message. Rolltop is confirming the matching copy in your Sent folder.`,
       tone: attention ? "warning" : "active"
     };
   }
   if (job.delivery_state === "retry_wait") {
-    return { label: "Retry scheduled", detail: `The SMTP server was unavailable. Rolltop will try again${job.next_attempt_at ? ` ${formatDate(job.next_attempt_at)}` : " automatically"}.`, tone: "warning" };
+    return { label: "Retry scheduled", detail: `${transport} was unavailable. Rolltop will try again${job.next_attempt_at ? ` ${formatDate(job.next_attempt_at)}` : " automatically"}.`, tone: "warning" };
   }
   if (job.delivery_state === "smtp_in_flight") {
-    return { label: "Sending", detail: "The immutable queued message is being streamed to your SMTP server.", tone: "active" };
+    return { label: "Sending", detail: `The immutable queued message is being delivered through ${transport}.`, tone: "active" };
   }
   return { label: "Queued", detail: "The message is safely stored locally and waiting for the delivery worker.", tone: "active" };
 }
 
 function jobSteps(job: OutboxJob): Array<{ label: string; state: string }> {
+  const transport = job.provider_native ? "Gmail API delivery" : "SMTP delivery";
   const failed = job.delivery_state === "failed" || job.delivery_state === "delivery_unknown";
   const accepted = job.delivery_state === "accepted";
   return [
     { label: "Safely queued", state: "done" },
     {
-      label: "SMTP delivery",
+      label: transport,
       state: failed ? "error" : accepted ? "done" : ["smtp_in_flight", "claimed"].includes(job.delivery_state) ? "current" : "pending"
     },
     { label: "Server accepted", state: failed ? "pending" : accepted ? "done" : "pending" },
