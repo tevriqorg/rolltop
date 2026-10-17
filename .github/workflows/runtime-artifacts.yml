@@ -88,6 +88,7 @@ jobs:
           for dir in "${frontend_dist_dirs[@]}"; do
             plugin="${dir#plugins/}"
             plugin="${plugin%%/*}"
+            mkdir -p "$runtime/plugins/$plugin"
             cp -a "$dir" "$runtime/plugins/$plugin/frontend_dist"
           done
 
