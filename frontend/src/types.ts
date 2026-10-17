@@ -122,6 +122,8 @@ export type OutboxJob = {
   raw_size: number;
   appended_uid: number;
   appended_uid_validity: number;
+  provider_native?: boolean;
+  provider?: string;
 };
 
 export type OutboxResponse = {

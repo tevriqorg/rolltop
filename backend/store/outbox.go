@@ -329,7 +329,22 @@ func (s *Store) OutboxSummaryForUser(ctx context.Context, userID int64) (OutboxS
 		COALESCE(MAX(id), 0)
 		FROM outbox_jobs WHERE user_id = ?`, userID).
 		Scan(&summary.Active, &summary.NeedsAttention, &summary.LatestID)
-	return summary, err
+	if err != nil {
+		return summary, err
+	}
+	var providerActive, providerAttention int
+	var providerLatest int64
+	err = db.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(CASE WHEN state IN ('pending','sending') THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN state IN ('failed','unknown') AND acknowledged_at=0 THEN 1 ELSE 0 END),0),
+		COALESCE(MAX(id),0) FROM provider_outbox_jobs WHERE user_id=?`, userID).Scan(&providerActive, &providerAttention, &providerLatest)
+	if err != nil {
+		return summary, err
+	}
+	summary.Active += providerActive
+	summary.NeedsAttention += providerAttention
+	summary.LatestID += providerLatest
+	return summary, nil
 }
 
 func (s *Store) OutboxMessageStatesForUser(ctx context.Context, userID int64, messageIDs []int64) (map[int64]OutboxMessageState, error) {

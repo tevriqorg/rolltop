@@ -84,7 +84,7 @@ func (s *Server) apiMailAI(w http.ResponseWriter, r *http.Request, path string) 
 			}
 			return
 		}
-		context, err := s.mockMailAIContext(r.Context(), cu.User.ID, body.MessageID)
+		context, err := s.providerMailAIContext(r.Context(), cu.User.ID, body.MessageID)
 		if store.IsNotFound(err) {
 			writeAPIError(w, http.StatusNotFound, "mock message not found")
 			return
@@ -320,7 +320,7 @@ func (s *Server) mailAIThreadScopeSpec(ctx context.Context, userID int64, scope 
 	if messageID <= 0 {
 		return store.MailAIThreadScopeSpec{}, errors.New("message_id is required for this mail-ai scope")
 	}
-	mailContext, err := s.mockMailAIContext(ctx, userID, messageID)
+	mailContext, err := s.providerMailAIContext(ctx, userID, messageID)
 	if err != nil {
 		return store.MailAIThreadScopeSpec{}, err
 	}
@@ -358,7 +358,7 @@ func (s *Server) mailAIAgentContextForThread(ctx context.Context, userID int64, 
 	}
 	messageID := saved.MessageID
 	if thread.Scope == store.MailAIThreadScopeMailThread {
-		mailContext, err := s.mockMailAIContext(ctx, userID, messageID)
+		mailContext, err := s.providerMailAIContext(ctx, userID, messageID)
 		if err != nil || mailContext.Account != saved.Account || mailContext.ThreadID != saved.MailThreadID {
 			messageID = 0
 			meta, listErr := s.store.ProviderMessages(ctx, userID)
@@ -376,7 +376,7 @@ func (s *Server) mailAIAgentContextForThread(ctx context.Context, userID int64, 
 	if messageID <= 0 {
 		return nil, store.ErrNotFound
 	}
-	mailContext, err := s.mockMailAIContext(ctx, userID, messageID)
+	mailContext, err := s.providerMailAIContext(ctx, userID, messageID)
 	if err != nil {
 		return nil, err
 	}
@@ -686,7 +686,7 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 		}
 		items := make([]map[string]any, 0, len(messages))
 		for _, m := range messages {
-			ctx, err := s.mockMailAIContext(r.Context(), in.UserID, m.ID)
+			ctx, err := s.providerMailAIContext(r.Context(), in.UserID, m.ID)
 			if err != nil {
 				return mailai.ToolResponse{}, 500, err
 			}
@@ -712,7 +712,7 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 		}
 		items := make([]mailai.CurrentMailContext, 0, len(messages))
 		for _, m := range messages {
-			context, err := s.mockMailAIContext(r.Context(), in.UserID, m.ID)
+			context, err := s.providerMailAIContext(r.Context(), in.UserID, m.ID)
 			if err != nil {
 				return mailai.ToolResponse{}, 500, err
 			}
@@ -726,9 +726,9 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 		if err := json.Unmarshal(in.Arguments, &args); err != nil || args.MessageID <= 0 {
 			return mailai.ToolResponse{}, 400, errors.New("get_message requires message_id")
 		}
-		context, err := s.mockMailAIContext(r.Context(), in.UserID, args.MessageID)
+		context, err := s.providerMailAIContext(r.Context(), in.UserID, args.MessageID)
 		if store.IsNotFound(err) {
-			return mailai.ToolResponse{}, 404, errors.New("mock message not found")
+			return mailai.ToolResponse{}, 404, errors.New("provider message not found")
 		}
 		if err != nil {
 			return mailai.ToolResponse{}, 500, err
@@ -742,7 +742,7 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 		if err := json.Unmarshal(in.Arguments, &args); err != nil || strings.TrimSpace(args.Account) == "" || strings.TrimSpace(args.ThreadID) == "" {
 			return mailai.ToolResponse{}, 400, errors.New("get_thread requires account and thread_id")
 		}
-		meta, err := s.store.ProviderMessages(r.Context(), in.UserID)
+		meta, err := s.store.ProviderMessagesFor(r.Context(), in.UserID, "")
 		if err != nil {
 			return mailai.ToolResponse{}, 500, err
 		}
@@ -751,7 +751,7 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 			if m.Account != args.Account || m.ThreadID != args.ThreadID {
 				continue
 			}
-			context, err := s.mockMailAIContext(r.Context(), in.UserID, m.ID)
+			context, err := s.providerMailAIContext(r.Context(), in.UserID, m.ID)
 			if err != nil {
 				return mailai.ToolResponse{}, 500, err
 			}
@@ -766,9 +766,9 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 		if err := json.Unmarshal(in.Arguments, &args); err != nil || args.MessageID <= 0 || strings.TrimSpace(args.Body) == "" {
 			return mailai.ToolResponse{}, 400, errors.New("draft_reply requires message_id and body")
 		}
-		context, err := s.mockMailAIContext(r.Context(), in.UserID, args.MessageID)
+		context, err := s.providerMailAIContext(r.Context(), in.UserID, args.MessageID)
 		if err != nil {
-			return mailai.ToolResponse{}, 404, errors.New("mock message not found")
+			return mailai.ToolResponse{}, 404, errors.New("provider message not found")
 		}
 		subject := context.Subject
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
@@ -779,7 +779,7 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 		if !in.Confirmed {
 			return mailai.ToolResponse{}, http.StatusConflict, errors.New("explicit confirmation required")
 		}
-		return s.runConfirmedMockMutation(r, in, hub)
+		return s.runConfirmedProviderMutation(r, in)
 	case "list_workspace_items":
 		items, err := s.store.ListMailAIWorkspaceItems(r.Context(), in.UserID, 100)
 		if err != nil {
@@ -797,7 +797,7 @@ func (s *Server) runMailAITool(r *http.Request, in mailai.ToolRequest) (mailai.T
 	}
 }
 
-func (s *Server) runConfirmedMockMutation(r *http.Request, in mailai.ToolRequest, hub mailhub.Service) (mailai.ToolResponse, int, error) {
+func (s *Server) runConfirmedProviderMutation(r *http.Request, in mailai.ToolRequest) (mailai.ToolResponse, int, error) {
 	var args struct {
 		MessageID int64  `json:"message_id"`
 		Label     string `json:"label"`
@@ -806,14 +806,12 @@ func (s *Server) runConfirmedMockMutation(r *http.Request, in mailai.ToolRequest
 	if err := json.Unmarshal(in.Arguments, &args); err != nil || args.MessageID <= 0 {
 		return mailai.ToolResponse{}, 400, errors.New("message_id is required")
 	}
-	meta, err := s.mockProviderMessage(r.Context(), in.UserID, args.MessageID)
-	if store.IsNotFound(err) {
-		return mailai.ToolResponse{}, 404, errors.New("mock message not found")
-	}
-	if err != nil {
+	if _, err := s.providerMessage(r.Context(), in.UserID, args.MessageID); store.IsNotFound(err) {
+		return mailai.ToolResponse{}, 404, errors.New("provider message not found")
+	} else if err != nil {
 		return mailai.ToolResponse{}, 500, err
 	}
-	change := provider.Mutation{MessageID: meta.NativeID}
+	change := provider.Mutation{}
 	switch in.Name {
 	case "add_label":
 		if strings.TrimSpace(args.Label) == "" {
@@ -824,29 +822,26 @@ func (s *Server) runConfirmedMockMutation(r *http.Request, in mailai.ToolRequest
 		change.Action = "archive"
 	case "mark_read":
 		change.Action, change.Value = "read", args.Read
+	default:
+		return mailai.ToolResponse{}, 400, errors.New("unsupported provider mutation")
 	}
-	if err := hub.Mutate(r.Context(), provider.Account{UserID: in.UserID, ID: meta.Account, Provider: provider.Mock}, change); err != nil {
+	native, err := s.mutateProviderMessage(r.Context(), in.UserID, args.MessageID, change)
+	if err != nil {
 		return mailai.ToolResponse{}, 500, err
+	}
+	if !native {
+		return mailai.ToolResponse{}, 409, errors.New("message is not provider-managed")
 	}
 	s.noteMailListChanged(in.UserID)
 	return mailai.ToolResponse{Name: in.Name, Result: map[string]any{"ok": true, "message_id": args.MessageID}}, 200, nil
 }
 
-func (s *Server) mockProviderMessage(ctx context.Context, userID, messageID int64) (store.ProviderMessage, error) {
-	meta, err := s.store.ProviderMessages(ctx, userID)
-	if err != nil {
-		return store.ProviderMessage{}, err
-	}
-	for _, m := range meta {
-		if m.ID == messageID {
-			return m, nil
-		}
-	}
-	return store.ProviderMessage{}, store.ErrNotFound
+func (s *Server) providerMessage(ctx context.Context, userID, messageID int64) (store.ProviderMessage, error) {
+	return s.store.ProviderMessageForLocalID(ctx, userID, messageID)
 }
 
-func (s *Server) mockMailAIContext(ctx context.Context, userID, messageID int64) (mailai.CurrentMailContext, error) {
-	meta, err := s.mockProviderMessage(ctx, userID, messageID)
+func (s *Server) providerMailAIContext(ctx context.Context, userID, messageID int64) (mailai.CurrentMailContext, error) {
+	meta, err := s.providerMessage(ctx, userID, messageID)
 	if err != nil {
 		return mailai.CurrentMailContext{}, err
 	}
@@ -859,7 +854,7 @@ func (s *Server) mockMailAIContext(ctx context.Context, userID, messageID int64)
 		body = body[:12<<10] + "…"
 	}
 	return mailai.CurrentMailContext{
-		Provider: "mock", Account: meta.Account, MessageID: row.ID, NativeID: meta.NativeID, ThreadID: meta.ThreadID,
+		Provider: meta.Provider, Account: meta.Account, MessageID: row.ID, NativeID: meta.NativeID, ThreadID: meta.ThreadID,
 		Subject: row.Subject, From: row.FromAddr, To: row.ToAddr, CC: row.CCAddr, Date: row.Date.UTC().Format(time.RFC3339), Body: body,
 	}, nil
 }

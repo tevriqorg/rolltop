@@ -16,6 +16,7 @@ import (
 
 	"rolltop/backend/mailparse"
 	"rolltop/backend/plugins"
+	"rolltop/backend/provider"
 	"rolltop/backend/search"
 	"rolltop/backend/store"
 )
@@ -1044,7 +1045,7 @@ func (s *Server) apiSetMessageStarred(w http.ResponseWriter, r *http.Request, id
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if mock, err := s.mutateMockMessage(r.Context(), cu.User.ID, id, "star", in.Starred); err != nil {
+	if mock, err := s.mutateProviderMessage(r.Context(), cu.User.ID, id, provider.Mutation{Action: "star", Value: in.Starred}); err != nil {
 		s.serverError(w, r, err)
 		return
 	} else if mock {

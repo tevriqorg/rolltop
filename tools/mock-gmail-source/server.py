@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-import base64, json, time
+import base64, json, os, time
 from email.message import EmailMessage
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-ROOT=Path('/home/ubuntu/runtime/mock-gmail-source')
+ROOT=Path(os.environ.get('MOCK_GMAIL_ROOT','/home/ubuntu/runtime/mock-gmail-source'))
 STATE=ROOT/'state-multi.json'
+PORT=int(os.environ.get('MOCK_GMAIL_PORT','18110'))
 ROOT.mkdir(parents=True, exist_ok=True)
 ACCOUNTS={
   'personal': ('Personal', 'vipdonmen.personal@example.test'),
@@ -110,7 +113,14 @@ def new_state(account):
 def seed():
     if STATE.exists(): return
     STATE.write_text(json.dumps({a:new_state(a) for a in ACCOUNTS},ensure_ascii=False))
-def load_all(): seed(); return json.loads(STATE.read_text())
+def load_all():
+    seed(); data=json.loads(STATE.read_text())
+    changed=False
+    for account,state in data.items():
+        if 'minHistoryId' not in state: state['minHistoryId']='0'; changed=True
+        if 'failNext' not in state: state['failNext']=None; changed=True
+    if changed: save_all(data)
+    return data
 def save_all(s): STATE.write_text(json.dumps(s,ensure_ascii=False))
 def split_path(path):
     parts=[p for p in path.split('/') if p]
@@ -129,6 +139,11 @@ class H(BaseHTTPRequestHandler):
             return self.out(200,{a:{'historyId':s['historyId'],'messages':len(s['messages'])} for a,s in all_state.items()})
         if not account: return self.out(404,{'error':'account required'})
         s=all_state[account]
+        fail=s.get('failNext')
+        if fail and not p.startswith('/__control__/') and fail.get('contains','') in p and int(fail.get('count',0))>0:
+            fail['count']=int(fail['count'])-1
+            if fail['count']<=0: s['failNext']=None
+            save_all(all_state); return self.out(int(fail.get('status',503)),{'error':'injected failure'})
         if p=='/gmail/v1/users/me/profile':
             ts={m['threadId'] for m in s['messages'].values()}
             return self.out(200,{'emailAddress':ACCOUNTS[account][1],'messagesTotal':len(s['messages']),'threadsTotal':len(ts),'historyId':s['historyId']})
@@ -142,9 +157,19 @@ class H(BaseHTTPRequestHandler):
             return self.out(200,out)
         if p.startswith('/gmail/v1/users/me/messages/'):
             mid=p.rsplit('/',1)[1]; m=s['messages'].get(mid)
-            return self.out(200,m) if m else self.out(404,{'error':'not found'})
+            if not m: return self.out(404,{'error':'not found'})
+            fmt=q.get('format',['full'])[0]
+            if fmt=='metadata':
+                raw=base64.urlsafe_b64decode(m['raw'] + '='*((4-len(m['raw'])%4)%4))
+                parsed=BytesParser(policy=policy.default).parsebytes(raw)
+                headers=[{'name':name,'value':str(parsed.get(name,''))} for name in ['Message-ID','From','To','Cc','Subject','Date'] if parsed.get(name)]
+                return self.out(200,{'id':m['id'],'threadId':m['threadId'],'historyId':m['historyId'],'labelIds':m['labelIds'],'sizeEstimate':m['sizeEstimate'],'payload':{'headers':headers}})
+            if fmt=='raw': return self.out(200,{k:m[k] for k in ['id','threadId','historyId','labelIds','sizeEstimate','raw']})
+            return self.out(200,m)
         if p=='/gmail/v1/users/me/history':
-            start=int(q.get('startHistoryId',['0'])[0]); hist=[h for h in s['history'] if int(h['id'])>start]
+            start=int(q.get('startHistoryId',['0'])[0])
+            if start < int(s.get('minHistoryId','0')): return self.out(404,{'error':'historyId too old'})
+            hist=[h for h in s['history'] if int(h['id'])>start]
             return self.out(200,{'history':hist,'historyId':s['historyId']})
         if p=='/__control__/state': return self.out(200,{'historyId':s['historyId'],'messages':len(s['messages'])})
         return self.out(404,{'error':'not found'})
@@ -152,13 +177,50 @@ class H(BaseHTTPRequestHandler):
         all_state=load_all(); u=urlparse(self.path); account,p=split_path(u.path)
         if not account: return self.out(404,{'error':'account required'})
         s=all_state[account]; n=int(self.headers.get('Content-Length','0')); body=json.loads(self.rfile.read(n) or b'{}')
+        fail=s.get('failNext')
+        if fail and not p.startswith('/__control__/') and fail.get('contains','') in p and int(fail.get('count',0))>0:
+            fail['count']=int(fail['count'])-1
+            if fail['count']<=0: s['failNext']=None
+            save_all(all_state); return self.out(int(fail.get('status',503)),{'error':'injected failure'})
+        if p.startswith('/gmail/v1/users/me/messages/') and (p.endswith('/trash') or p.endswith('/untrash')):
+            mid=p.split('/')[-2]; m=s['messages'].get(mid)
+            if not m: return self.out(404,{'error':'not found'})
+            before=set(m['labelIds']); labels=set(before)
+            if p.endswith('/trash'): labels.add('TRASH'); labels.discard('INBOX')
+            else: labels.discard('TRASH'); labels.add('INBOX')
+            added=sorted(labels-before); removed=sorted(before-labels); m['labelIds']=sorted(labels)
+            hid=int(s['historyId'])+1; s['historyId']=str(hid); m['historyId']=str(hid); event={'id':str(hid)}; ref={'message':{'id':mid,'threadId':m['threadId'],'labelIds':m['labelIds']}}
+            if added: event['labelsAdded']=[ref]
+            if removed: event['labelsRemoved']=[ref]
+            s['history'].append(event); save_all(all_state); return self.out(200,m)
         if p.startswith('/gmail/v1/users/me/messages/') and p.endswith('/modify'):
             mid=p.split('/')[-2]; m=s['messages'].get(mid)
             if not m: return self.out(404,{'error':'not found'})
-            labels=set(m['labelIds']); labels.update(body.get('addLabelIds') or []); labels.difference_update(body.get('removeLabelIds') or [])
+            before=set(m['labelIds']); labels=set(before); labels.update(body.get('addLabelIds') or []); labels.difference_update(body.get('removeLabelIds') or [])
+            added=sorted(labels-before); removed=sorted(before-labels)
             m['labelIds']=sorted(labels); hid=int(s['historyId'])+1; s['historyId']=str(hid); m['historyId']=str(hid)
-            s['history'].append({'id':str(hid),'labelsAdded':[{'message':{'id':mid,'threadId':m['threadId'],'labelIds':m['labelIds']}}]})
-            save_all(all_state); return self.out(200,m)
+            event={'id':str(hid)}; ref={'message':{'id':mid,'threadId':m['threadId'],'labelIds':m['labelIds']}}
+            if added: event['labelsAdded']=[ref]
+            if removed: event['labelsRemoved']=[ref]
+            s['history'].append(event); save_all(all_state); return self.out(200,m)
+        if p=='/gmail/v1/users/me/messages/send':
+            encoded=str(body.get('raw') or ''); raw=base64.urlsafe_b64decode(encoded + '='*((4-len(encoded)%4)%4))
+            parsed=BytesParser(policy=policy.default).parsebytes(raw); hid=int(s['historyId'])+1
+            mid=f'{account[0]}s{hid}'; tid=str(body.get('threadId') or f'{account[0]}st{hid}'); labels=['SENT']
+            m={'id':mid,'threadId':tid,'labelIds':labels,'historyId':str(hid),'internalDate':str(int(time.time()*1000)),'sizeEstimate':len(raw),'raw':base64.urlsafe_b64encode(raw).decode().rstrip('=')}
+            s['messages'][mid]=m; s['historyId']=str(hid); s['history'].append({'id':str(hid),'messagesAdded':[{'message':{'id':mid,'threadId':tid,'labelIds':labels}}]}); save_all(all_state)
+            return self.out(200,{'id':mid,'threadId':tid,'labelIds':labels})
+        if p=='/__control__/delete':
+            mid=str(body.get('id') or ''); m=s['messages'].pop(mid,None)
+            if not m: return self.out(404,{'error':'not found'})
+            hid=int(s['historyId'])+1; s['historyId']=str(hid); s['history'].append({'id':str(hid),'messagesDeleted':[{'message':{'id':mid,'threadId':m['threadId']}}]}); save_all(all_state)
+            return self.out(200,{'id':mid,'historyId':str(hid),'deleted':True})
+        if p=='/__control__/expire-history':
+            floor=str(body.get('minHistoryId') or s['historyId']); s['minHistoryId']=floor; save_all(all_state); return self.out(200,{'minHistoryId':floor})
+        if p=='/__control__/clear-history-expiry':
+            s['minHistoryId']='0'; save_all(all_state); return self.out(200,{'minHistoryId':'0'})
+        if p=='/__control__/fail-next':
+            s['failNext']={'contains':str(body.get('contains') or '/gmail/v1/'),'status':int(body.get('status') or 503),'count':max(1,int(body.get('count') or 1))}; save_all(all_state); return self.out(200,s['failNext'])
         if p=='/__control__/inject':
             hid=int(s['historyId'])+1; mid=f'{account[0]}{len(s["messages"])+1}'; tid=f'{account[0]}t{len(s["messages"])+1}'
             subj=body.get('subject') or f'New {account} source message'; sender=body.get('from') or f'new@{account}.example.test'
@@ -173,4 +235,4 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
 
 if __name__=='__main__':
-    seed(); ThreadingHTTPServer(('127.0.0.1',18110),H).serve_forever()
+    seed(); ThreadingHTTPServer(('127.0.0.1',PORT),H).serve_forever()

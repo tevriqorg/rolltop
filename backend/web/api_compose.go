@@ -50,6 +50,18 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		if providerJob, handled, err := s.queueProviderCompose(r.Context(), cu, form); handled {
+			if err != nil {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			s.notifyOutboxChanged(cu.User.ID)
+			s.wakeProviderOutboxWorker()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			writeJSON(w, providerOutboxResult(providerJob, form))
+			return
+		}
 		job, sent, err := s.queueCompose(r.Context(), cu, form)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -59,13 +71,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		s.wakeOutboxWorker()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		writeJSON(w, map[string]any{
-			"ok":         true,
-			"queued":     true,
-			"send_id":    job.ID,
-			"message_id": sent.ID,
-			"status":     job.DeliveryState,
-		})
+		writeJSON(w, map[string]any{"ok": true, "queued": true, "send_id": job.ID, "message_id": sent.ID, "status": job.DeliveryState})
 	default:
 		methodNotAllowed(w)
 	}

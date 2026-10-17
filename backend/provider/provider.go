@@ -43,6 +43,7 @@ type Message struct {
 	Raw       []byte
 	Size      int64
 	Oversized bool // Raw is a header stub, never a complete body.
+	Deleted   bool // Source-side deletion; Raw and mutable state are absent.
 }
 
 // MailProvider streams observations. A returned checkpoint is committed only

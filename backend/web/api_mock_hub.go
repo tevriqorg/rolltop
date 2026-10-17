@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"rolltop/backend/mailhub"
 	"rolltop/backend/provider"
@@ -17,8 +18,8 @@ func (s *Server) apiMockHub(w http.ResponseWriter, r *http.Request, path string)
 	w.Header().Set("Cache-Control", "private, no-store")
 	// All native provider state comes from the signed-in tenant. Browser input
 	// cannot choose a user, transport, credential, or provider implementation.
-	s.mockHubMu.Lock()
-	defer s.mockHubMu.Unlock()
+	s.providerHubMu.Lock()
+	defer s.providerHubMu.Unlock()
 	hub := mailhub.Service{Store: s.store, Blobs: s.blobs, Search: s.search}
 	if path == "mock-hub" && r.Method == http.MethodGet {
 		q := r.URL.Query()
@@ -119,31 +120,67 @@ func (s *Server) apiMockHub(w http.ResponseWriter, r *http.Request, path string)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// mutateMockMessage intercepts shared UI actions before any IMAP work is queued.
-func (s *Server) mutateMockMessage(ctx context.Context, userID, messageID int64, action string, value bool) (bool, error) {
-	s.mockHubMu.Lock()
-	defer s.mockHubMu.Unlock()
-	metadata, err := s.store.ProviderMessages(ctx, userID)
+// mutateProviderMessage intercepts provider-native shared UI actions before any
+// IMAP work is queued. Source mutation is committed before Mirror projection;
+// the provider cursor advances only after projection succeeds.
+func (s *Server) mutateProviderMessage(ctx context.Context, userID, messageID int64, change provider.Mutation) (bool, error) {
+	meta, err := s.store.ProviderMessageForLocalID(ctx, userID, messageID)
+	if store.IsNotFound(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	for _, m := range metadata {
-		if m.ID == messageID {
-			hub := mailhub.Service{Store: s.store, Blobs: s.blobs, Search: s.search}
-			return true, hub.Mutate(ctx, provider.Account{UserID: userID, ID: m.Account, Provider: provider.Mock}, provider.Mutation{MessageID: m.NativeID, Action: action, Value: value})
+	change.MessageID = meta.NativeID
+	hub := mailhub.Service{Store: s.store, Blobs: s.blobs, Search: s.search}
+	s.providerHubMu.Lock()
+	defer s.providerHubMu.Unlock()
+	switch meta.Provider {
+	case string(provider.Mock):
+		return true, hub.Mutate(ctx, provider.Account{UserID: userID, ID: meta.Account, Provider: provider.Mock}, change)
+	case string(provider.Gmail):
+		if s.googleConnector == nil {
+			return true, errors.New("Google connector is not configured")
 		}
+		connections, err := s.store.ListAccountConnections(ctx, userID, s.googleConnector.ID())
+		if err != nil {
+			return true, err
+		}
+		var connection store.AccountConnection
+		for _, candidate := range connections {
+			if googleSourceID(candidate) == meta.Account {
+				connection = candidate
+				break
+			}
+		}
+		if connection.ID == 0 {
+			return true, errors.New("Gmail account connection is unavailable")
+		}
+		gate, err := s.store.GetProviderSyncGate(ctx, userID, string(provider.Gmail), meta.Account)
+		if err != nil {
+			return true, err
+		}
+		if !gate.BackfillApproved() {
+			return true, errors.New("Gmail mutations remain locked pending Census review and explicit approval")
+		}
+		client, err := s.gmailClientForConnection(ctx, userID, connection)
+		if err != nil {
+			return true, err
+		}
+		return true, hub.MutateGmail(ctx, googleProviderAccount(userID, connection), connection.DisplayName, connection.Email, client, change)
+	default:
+		return true, errors.New("unsupported provider mutation")
 	}
-	return false, nil
 }
 
 func (s *Server) markMailRead(ctx context.Context, userID int64, ids []int64, read bool) ([]int64, error) {
 	real := make([]int64, 0, len(ids))
 	for _, id := range ids {
-		mock, err := s.mutateMockMessage(ctx, userID, id, "read", read)
+		native, err := s.mutateProviderMessage(ctx, userID, id, provider.Mutation{Action: "read", Value: read})
 		if err != nil {
 			return nil, err
 		}
-		if !mock {
+		if !native {
 			real = append(real, id)
 		}
 	}

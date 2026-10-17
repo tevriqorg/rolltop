@@ -76,11 +76,14 @@ type Options struct {
 	MailAISharedToken string
 	MailAIHTTPClient  *http.Client
 	GoogleConnector   accountconnector.Connector
+	// GmailAPIBaseURL/GmailHTTPClient are injectable for contract tests. Production leaves BaseURL empty to use Google.
+	GmailAPIBaseURL string
+	GmailHTTPClient *http.Client
 }
 
 // Server owns HTTP handlers, shared services, session settings, event fanout, and lightweight caches.
 type Server struct {
-	mockHubMu                 sync.Mutex
+	providerHubMu             sync.Mutex
 	store                     *store.Store
 	blobs                     *blob.Store
 	search                    *search.Service
@@ -135,6 +138,7 @@ type Server struct {
 	snoozeSchedulerWake       chan struct{}
 	outboxCancel              context.CancelFunc
 	outboxWake                chan struct{}
+	providerOutboxWake        chan struct{}
 	outboxWG                  sync.WaitGroup
 	outboxWorkerID            string
 	// backgroundCtx bounds every fire-and-forget goroutine the server spawns
@@ -156,6 +160,7 @@ type Server struct {
 	googleOAuthMu      sync.Mutex
 	googleOAuthPending map[string]googleOAuthPending
 	gmailAPIBaseURL    string
+	gmailHTTPClient    *http.Client
 }
 
 type contextKey string
@@ -238,26 +243,27 @@ type conversationView struct {
 }
 
 type composeForm struct {
-	To                   string                      `json:"to"`
-	Cc                   string                      `json:"cc"`
-	Bcc                  string                      `json:"bcc"`
-	Subject              string                      `json:"subject"`
-	Body                 string                      `json:"body"`
-	BodyHTML             string                      `json:"body_html"`
-	DraftMessageID       int64                       `json:"draft_message_id"`
-	InReplyToID          int64                       `json:"in_reply_to_id"`
-	FromIdentityID       int64                       `json:"from_identity_id"`
-	AvailableAttachments []composeExistingAttachment `json:"available_attachments,omitempty"`
-	IncludeAttachmentIDs []int64                     `json:"include_attachment_ids,omitempty"`
-	ForwardAttachmentID  int64                       `json:"forward_attachment_message_id,omitempty"`
-	ForwardAttachment    *composeExistingAttachment  `json:"forward_attachment,omitempty"`
-	Attachments          []composeAttachment         `json:"attachments,omitempty"`
-	SubmissionKey        string                      `json:"submission_key,omitempty"`
-	SecurityEncrypted    bool                        `json:"pgp_encrypted,omitempty"`
-	SecuritySigned       bool                        `json:"pgp_signed,omitempty"`
-	SecurityMIME         bool                        `json:"pgp_mime,omitempty"`
-	SecuritySignature    string                      `json:"pgp_signature,omitempty"`
-	AttachPublicKey      bool                        `json:"attach_public_key,omitempty"`
+	To                      string                      `json:"to"`
+	Cc                      string                      `json:"cc"`
+	Bcc                     string                      `json:"bcc"`
+	Subject                 string                      `json:"subject"`
+	Body                    string                      `json:"body"`
+	BodyHTML                string                      `json:"body_html"`
+	DraftMessageID          int64                       `json:"draft_message_id"`
+	InReplyToID             int64                       `json:"in_reply_to_id"`
+	FromIdentityID          int64                       `json:"from_identity_id"`
+	AvailableAttachments    []composeExistingAttachment `json:"available_attachments,omitempty"`
+	IncludeAttachmentIDs    []int64                     `json:"include_attachment_ids,omitempty"`
+	ForwardAttachmentID     int64                       `json:"forward_attachment_message_id,omitempty"`
+	ForwardAttachment       *composeExistingAttachment  `json:"forward_attachment,omitempty"`
+	Attachments             []composeAttachment         `json:"attachments,omitempty"`
+	SubmissionKey           string                      `json:"submission_key,omitempty"`
+	ProviderSourceMessageID int64                       `json:"-"`
+	SecurityEncrypted       bool                        `json:"pgp_encrypted,omitempty"`
+	SecuritySigned          bool                        `json:"pgp_signed,omitempty"`
+	SecurityMIME            bool                        `json:"pgp_mime,omitempty"`
+	SecuritySignature       string                      `json:"pgp_signature,omitempty"`
+	AttachPublicKey         bool                        `json:"attach_public_key,omitempty"`
 }
 
 type composeExistingAttachment struct {
@@ -364,6 +370,7 @@ func New(opts Options) (*Server, error) {
 		snoozePushDirty:           map[int64]bool{},
 		snoozeSchedulerWake:       make(chan struct{}, 1),
 		outboxWake:                make(chan struct{}, 1),
+		providerOutboxWake:        make(chan struct{}, 1),
 		backgroundCtx:             backgroundCtx,
 		backgroundCancel:          backgroundCancel,
 		readStatePushes:           newReadStatePushQueue(),
@@ -376,6 +383,8 @@ func New(opts Options) (*Server, error) {
 		googleConnector:           opts.GoogleConnector,
 		accountConnectors:         accountconnector.Service{Store: opts.Store, MasterKey: opts.MasterKey},
 		googleOAuthPending:        make(map[string]googleOAuthPending),
+		gmailAPIBaseURL:           strings.TrimRight(strings.TrimSpace(opts.GmailAPIBaseURL), "/"),
+		gmailHTTPClient:           opts.GmailHTTPClient,
 	}
 	if srv.mailAIHTTPClient == nil {
 		srv.mailAIHTTPClient = &http.Client{Timeout: 95 * time.Second}
@@ -407,6 +416,8 @@ func New(opts Options) (*Server, error) {
 		srv.resumeSnoozeReminderWebPushAsync()
 		srv.startSnoozeScheduler()
 		srv.startOutboxWorker()
+		srv.startProviderOutboxWorker()
+		srv.startGmailSyncWorker()
 	}
 	return srv, nil
 }
