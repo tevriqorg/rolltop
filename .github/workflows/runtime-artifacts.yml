@@ -1,0 +1,119 @@
+name: Runtime Artifacts
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-runtime:
+    name: Build Linux runtime artifact
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v5
+
+      - name: Set Up Go
+        uses: actions/setup-go@v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set Up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build Frontend And Plugin Frontends
+        run: |
+          npm run build:vite
+          npm run build:plugins
+
+      - name: Build Rolltop And Every Backend Plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/rolltop-runtime"
+          rm -rf "$runtime"
+          mkdir -p "$runtime/frontend" "$runtime/plugins"
+
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
+            -trimpath \
+            -ldflags="-s -w -X rolltop/backend/buildinfo.Version=main -X rolltop/backend/buildinfo.BuildDate=${build_date} -X rolltop/backend/buildinfo.Commit=${GITHUB_SHA}" \
+            -o "$runtime/rolltop" \
+            ./cmd/rolltop
+
+          mapfile -t plugins < <(
+            find plugins -mindepth 2 -maxdepth 2 -type d -name backend -printf '%h\n' \
+              | sed 's#^plugins/##' \
+              | sort
+          )
+          if [ "${#plugins[@]}" -eq 0 ]; then
+            echo "::error::No backend plugins discovered under plugins/*/backend"
+            exit 1
+          fi
+          printf 'Discovered %d backend plugins: %s\n' "${#plugins[@]}" "${plugins[*]}"
+
+          for plugin in "${plugins[@]}"; do
+            mkdir -p "$runtime/plugins/$plugin/backend"
+            CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
+              -buildmode=plugin -trimpath -ldflags="-s -w" \
+              -o "$runtime/plugins/$plugin/backend/$plugin.so" \
+              "./plugins/$plugin/backend"
+          done
+
+          built_count="$(find "$runtime/plugins" -type f -name '*.so' | wc -l)"
+          if [ "$built_count" -ne "${#plugins[@]}" ]; then
+            echo "::error::Built $built_count backend plugins for ${#plugins[@]} discovered directories"
+            exit 1
+          fi
+          test -s "$runtime/plugins/oidc/backend/oidc.so"
+
+          cp -a frontend/dist "$runtime/frontend/dist"
+          for plugin in "${plugins[@]}"; do
+            if [ -d "plugins/$plugin/frontend_dist" ]; then
+              cp -a "plugins/$plugin/frontend_dist" "$runtime/plugins/$plugin/frontend_dist"
+            fi
+            if [ -d "plugins/$plugin/frontend/dist" ]; then
+              mkdir -p "$runtime/plugins/$plugin/frontend"
+              cp -a "plugins/$plugin/frontend/dist" "$runtime/plugins/$plugin/frontend/dist"
+            fi
+          done
+
+          {
+            echo "repository=${GITHUB_REPOSITORY}"
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "build_date=${build_date}"
+            go version
+            node --version
+            printf 'plugins=%s\n' "${plugins[*]}"
+          } > "$runtime/PROVENANCE.txt"
+
+          (
+            cd "$runtime"
+            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+
+          mkdir -p build-artifacts
+          tar -C "$RUNNER_TEMP" -czf build-artifacts/rolltop-runtime-linux-amd64.tar.gz rolltop-runtime
+
+      - name: Upload Runtime Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: rolltop-runtime-linux-amd64
+          path: build-artifacts/rolltop-runtime-linux-amd64.tar.gz
+          if-no-files-found: error
+          retention-days: 90
